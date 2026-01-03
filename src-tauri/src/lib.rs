@@ -41,7 +41,6 @@ pub fn run() {
                 match db.load_settings().await {
                     Ok(Some(s)) => s,
                     Ok(None) => {
-                        // Try migrate from json
                         let json_path = app_data_dir.join("settings.json");
                         if json_path.exists() {
                             if let Ok(content) = std::fs::read_to_string(&json_path) {
@@ -92,19 +91,9 @@ pub fn run() {
             )?;
 
             // Load icons
-            let icon_gray = Image::from_bytes(include_bytes!("../icons/tray_gray.png"))
-                .expect("failed to load gray icon");
-            let icon_green = Image::from_bytes(include_bytes!("../icons/tray_green.png"))
-                .expect("failed to load green icon");
-            let icon_red = Image::from_bytes(include_bytes!("../icons/tray_red.png"))
-                .expect("failed to load red icon");
 
             // Listen for tray updates
             let status_i_clone = status_i.clone();
-            let app_handle = app.handle().clone();
-            let icon_gray_clone = icon_gray.clone();
-            let icon_green_clone = icon_green.clone();
-            let icon_red_clone = icon_red.clone();
 
             app.listen("update-tray-status", move |event| {
                 if let Ok(payload) = serde_json::from_str::<TrayStatusPayload>(event.payload()) {
@@ -124,22 +113,13 @@ pub fn run() {
                     };
 
                     let _ = status_i_clone.set_text(text);
-
-                    if let Some(tray) = app_handle.tray_by_id("tray") {
-                        let icon = if payload.error_count > 0 {
-                            &icon_red_clone
-                        } else if payload.active_count > 0 {
-                            &icon_green_clone
-                        } else {
-                            &icon_gray_clone
-                        };
-                        let _ = tray.set_icon(Some(icon.clone()));
-                    }
                 }
             });
 
+            let icon = Image::from_bytes(include_bytes!("../icons/tray.png"))
+                .expect("failed to load gray icon");
             let _tray = TrayIconBuilder::with_id("tray")
-                .icon(app.default_window_icon().unwrap().clone())
+                .icon(icon)
                 .menu(&menu)
                 .show_menu_on_left_click(false)
                 .on_menu_event(|app, event| match event.id().as_ref() {
