@@ -1,0 +1,11 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Only run commitlint if commitlint config exists
+if [ -f "commitlint.config.js" ] || [ -f ".commitlintrc.json" ] || [ -f ".commitlintrc.js" ]; then
+  npx commitlint --edit $1
+else
+  # Optional: basic commit message format check
+  # For now, just let the commit pass without linting
+  exit 0
+fi

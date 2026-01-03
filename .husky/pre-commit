@@ -1,0 +1,29 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Check if we're in a Tauri project and run Rust checks
+if [ -d "src-tauri" ]; then
+  cd src-tauri
+  echo "Running Rust format check..."
+  if ! cargo fmt --check; then
+    echo "❌ cargo fmt failed. Running 'cargo fmt' to fix formatting..."
+    cargo fmt
+    echo "Rust code formatted successfully! Please review and re-add the formatted files."
+    exit 1
+  fi
+  
+  echo "Running Rust clippy..."
+  if ! cargo clippy -- -D warnings; then
+    echo "❌ cargo clippy failed. Please fix the warnings."
+    exit 1
+  fi
+  
+  echo "Running Rust tests..."
+  if ! cargo test; then
+    echo "❌ cargo test failed. Please fix the failing tests."
+    exit 1
+  fi
+fi
+
+# Run any frontend checks if needed
+echo "Pre-commit checks passed! ✅"
