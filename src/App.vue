@@ -119,7 +119,7 @@ const handleSave = async (data: TunnelConfig) => {
     <!-- Header -->
     <header class="sticky top-0 z-10 flex items-center justify-between border-b border-slate-800 bg-slate-950/80 px-6 py-4 backdrop-blur-md">
       <div class="flex items-center gap-2">
-        <h1 class="text-lg font-bold tracking-tight text-white">DevTunnel</h1>
+        <h1 class="text-lg font-bold tracking-tight text-white">Ciconia</h1>
       </div>
       
       <button 

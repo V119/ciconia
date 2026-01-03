@@ -141,6 +141,8 @@ onMounted(() => {
                     max="300" 
                     step="10"
                     class="h-2 w-full cursor-pointer appearance-none rounded-lg bg-slate-700 accent-blue-500"
+                    autocapitalize="off"
+                    autocomplete="off"
                   >
                   <span class="w-12 text-right text-sm text-slate-400">{{ settings.keep_alive_interval }}s</span>
                 </div>
@@ -153,6 +155,8 @@ onMounted(() => {
                   v-model="settings.default_ssh_key" 
                   placeholder="~/.ssh/id_rsa"
                   class="mt-1 block w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                  autocapitalize="off"
+                  autocomplete="off"
                 >
               </div>
             </div>
@@ -177,6 +181,8 @@ onMounted(() => {
                     max="60" 
                     step="5"
                     class="h-2 w-full cursor-pointer appearance-none rounded-lg bg-slate-700 accent-blue-500"
+                    autocapitalize="off"
+                    autocomplete="off"
                   >
                   <span class="w-12 text-right text-sm text-slate-400">{{ settings.connection_timeout }}s</span>
                 </div>

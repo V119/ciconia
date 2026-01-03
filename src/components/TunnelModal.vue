@@ -200,6 +200,8 @@ const save = () => {
               type="text" 
               class="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
               placeholder="e.g. Prod Database"
+              autocapitalize="off"
+              autocomplete="off"
             >
           </div>
 
@@ -210,6 +212,8 @@ const save = () => {
               <input 
                 v-model="formData.ssh_host"
                 type="text" 
+                autocapitalize="off"
+                autocomplete="off" 
                 class="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
                 placeholder="192.168.1.100"
               >
@@ -219,6 +223,8 @@ const save = () => {
               <input 
                 v-model.number="formData.ssh_port"
                 type="number" 
+                autocapitalize="off"
+                autocomplete="off" 
                 class="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
               >
             </div>
@@ -232,6 +238,8 @@ const save = () => {
                 type="text" 
                 class="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
                 placeholder="root"
+                autocapitalize="off"
+                autocomplete="off"
               >
             </div>
             <div>
@@ -253,6 +261,8 @@ const save = () => {
               type="text" 
               class="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
               placeholder="/Users/me/.ssh/id_rsa"
+              autocapitalize="off"
+              autocomplete="off"
             >
           </div>
           <div v-else>
@@ -261,6 +271,8 @@ const save = () => {
               v-model="formData.ssh_password"
               type="password" 
               class="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+              autocapitalize="off"
+              autocomplete="off"
             >
           </div>
 
@@ -274,6 +286,8 @@ const save = () => {
                   v-model.number="formData.local_port"
                   type="number" 
                   class="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                  autocapitalize="off"
+                  autocomplete="off"
                 >
               </div>
               <div>
@@ -282,6 +296,8 @@ const save = () => {
                   v-model="formData.target_host"
                   type="text" 
                   class="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                  autocapitalize="off"
+                  autocomplete="off"
                 >
               </div>
               <div>
@@ -290,6 +306,8 @@ const save = () => {
                   v-model.number="formData.target_port"
                   type="number" 
                   class="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                  autocapitalize="off"
+                  autocomplete="off"
                 >
               </div>
             </div>
@@ -356,6 +374,8 @@ const save = () => {
                       type="number"
                       class="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
                       placeholder="e.g. 80"
+                      autocapitalize="off"
+                      autocomplete="off"
                     >
                  </div>
                  <div>
@@ -364,6 +384,8 @@ const save = () => {
                       v-model.number="formData.local_port"
                       type="number" 
                       class="w-full rounded-md border border-slate-700 bg-slate-800 px-3 py-2 text-sm text-white focus:border-blue-500 focus:outline-none"
+                      autocapitalize="off"
+                      autocomplete="off"
                     >
                  </div>
               </div>

@@ -1,3 +1,4 @@
+use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use ssh2::Session;
 use std::io::Read;
@@ -31,35 +32,64 @@ pub struct SshParams {
 }
 
 fn connect_ssh(params: &SshParams) -> Result<Session, String> {
-    let tcp = TcpStream::connect(format!("{}:{}", params.host, params.port))
-        .map_err(|e| format!("Failed to connect to host: {}", e))?;
+    debug!(
+        "Connecting to SSH host {}:{} using {}",
+        params.host, params.port, params.username
+    );
+    let tcp = TcpStream::connect(format!("{}:{}", params.host, params.port)).map_err(|e| {
+        let error_msg = format!("Failed to connect to host: {}", e);
+        error!("{}", error_msg);
+        error_msg
+    })?;
 
-    let mut sess = Session::new().map_err(|e| format!("Failed to create SSH session: {}", e))?;
+    let mut sess = Session::new().map_err(|e| {
+        let error_msg = format!("Failed to create SSH session: {}", e);
+        error!("{}", error_msg);
+        error_msg
+    })?;
     sess.set_tcp_stream(tcp);
-    sess.handshake()
-        .map_err(|e| format!("SSH handshake failed: {}", e))?;
+    sess.handshake().map_err(|e| {
+        let error_msg = format!("SSH handshake failed: {}", e);
+        error!("{}", error_msg);
+        error_msg
+    })?;
 
     if params.auth_type == "key" {
         let key_path = params
             .private_key_path
             .as_ref()
-            .ok_or("Private key path required for key auth")?;
+            .ok_or_else(|| "Private key path required for key auth".to_string())?;
+        debug!("Authenticating with SSH key: {}", key_path);
         sess.userauth_pubkey_file(&params.username, None, Path::new(key_path), None)
-            .map_err(|e| format!("Key authentication failed: {}", e))?;
+            .map_err(|e| {
+                let error_msg = format!("Key authentication failed: {}", e);
+                error!("{}", error_msg);
+                error_msg
+            })?;
     } else {
         let password = params
             .password
             .as_ref()
-            .ok_or("Password required for password auth")?;
+            .ok_or_else(|| "Password required for password auth".to_string())?;
+        debug!("Authenticating with password");
         sess.userauth_password(&params.username, password)
-            .map_err(|e| format!("Password authentication failed: {}", e))?;
+            .map_err(|e| {
+                let error_msg = format!("Password authentication failed: {}", e);
+                error!("{}", error_msg);
+                error_msg
+            })?;
     }
+    info!(
+        "SSH connection established to {}: {}",
+        params.host, params.port
+    );
     Ok(sess)
 }
 
 #[command]
 pub async fn fetch_containers(params: SshParams) -> Result<Vec<DockerContainer>, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    debug!("Fetching Docker containers via SSH");
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let sess = connect_ssh(&params)?;
 
         let mut channel = sess
@@ -97,10 +127,20 @@ pub async fn fetch_containers(params: SshParams) -> Result<Vec<DockerContainer>,
             }
         }
 
+        debug!("Fetched {} containers from Docker", containers.len());
         Ok(containers)
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    match &result {
+        Ok(containers) => info!(
+            "Successfully fetched {} Docker containers",
+            containers.len()
+        ),
+        Err(e) => error!("Failed to fetch Docker containers: {}", e),
+    }
+    result
 }
 
 #[command]
@@ -108,7 +148,9 @@ pub async fn get_container_details(
     params: SshParams,
     container_id: String,
 ) -> Result<ContainerDetails, String> {
-    tauri::async_runtime::spawn_blocking(move || {
+    debug!("Getting details for container {}", container_id);
+    let container_id_clone = container_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
         let sess = connect_ssh(&params)?;
 
         let mut channel = sess.channel_session()
@@ -126,9 +168,22 @@ pub async fn get_container_details(
         channel.wait_close().ok();
 
         let ip = s.trim().to_string();
+        debug!("Retrieved IP {} for container {}", ip, container_id);
 
         Ok(ContainerDetails { ip })
     })
     .await
-    .map_err(|e| e.to_string())?
+    .map_err(|e| e.to_string())?;
+
+    match &result {
+        Ok(_) => debug!(
+            "Successfully retrieved details for container {}",
+            container_id_clone
+        ),
+        Err(e) => error!(
+            "Failed to get container details for {}: {}",
+            container_id_clone, e
+        ),
+    }
+    result
 }
