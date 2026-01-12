@@ -1,34 +1,24 @@
 use crate::server::manager::TunnelManager;
 
 use crate::server::model::{ServerTunnelConfig, TunnelHealthStatus};
+use crate::TrayStatusPayload;
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
-use tauri::AppHandle;
+use std::time::Duration;
+use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 
+#[derive(Clone)]
 pub struct ServerManager {
     tunnel_manager: Arc<TunnelManager>,
-    #[allow(dead_code)]
-    app_handle: std::sync::Mutex<Option<AppHandle>>,
 }
 
 impl ServerManager {
     pub fn new() -> Self {
         Self {
             tunnel_manager: Arc::new(TunnelManager::new()),
-            app_handle: std::sync::Mutex::new(None),
         }
     }
-
-    // fn emit_tunnel_event(&self, event_name: &str, payload: serde_json::Value) {
-    //     if let Ok(stored_handle) = self.app_handle.lock() {
-    //         if let Some(ref handle) = *stored_handle {
-    //             if let Err(e) = handle.emit(event_name, payload) {
-    //                 eprintln!("Failed to emit tunnel event '{}': {}", event_name, e);
-    //             }
-    //         }
-    //     }
-    // }
 
     pub async fn start_tunnel(&self, tunnel_config: &ServerTunnelConfig) -> Result<()> {
         // Convert the database TunnelConfig to the server model TunnelConfig
@@ -66,5 +56,23 @@ impl ServerManager {
         } else {
             Err(anyhow!(format!("Invalid tunnel ID: {}", id)))
         }
+    }
+
+    pub async fn monitor_tunnels_status(&self, app_handle: &AppHandle) -> Result<()> {
+        let mut interval = tokio::time::interval(Duration::from_secs(5));
+        let manager = self.tunnel_manager.clone();
+        let app_handle = app_handle.clone();
+
+        tokio::spawn(async move {
+            loop {
+                interval.tick().await;
+                let all_status = manager.get_all_tunnel_health_state().await;
+                let payload = TrayStatusPayload::from_health_map(&all_status);
+
+                let _ = app_handle.emit("update-tray-status", &payload);
+            }
+        });
+
+        Ok(())
     }
 }

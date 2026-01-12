@@ -11,8 +11,10 @@ use crate::commands::settings::{get_settings, save_settings};
 use crate::commands::tunnel::{
     delete_tunnel, get_tunnel_status, get_tunnels, save_tunnel, start_tunnel, stop_tunnel,
 };
+use crate::server::model::TunnelHealthStatus;
 use crate::service::tunnel::TunnelService;
 use crate::state::AppState;
+use std::collections::HashMap;
 use tauri::{
     image::Image,
     menu::{Menu, MenuItem, PredefinedMenuItem},
@@ -21,10 +23,34 @@ use tauri::{
 };
 use tauri_plugin_log::{Target, TargetKind};
 
-#[derive(serde::Deserialize)]
+#[derive(serde::Deserialize, serde::Serialize)]
 struct TrayStatusPayload {
     active_count: usize,
     error_count: usize,
+}
+
+impl TrayStatusPayload {
+    fn from_health_map<K>(map: &HashMap<K, TunnelHealthStatus>) -> Self {
+        map.values().fold(
+            TrayStatusPayload {
+                active_count: 0,
+                error_count: 0,
+            },
+            |mut acc, status| {
+                match status {
+                    // 只有 Healthy 算作 Active
+                    TunnelHealthStatus::Healthy { .. } => {
+                        acc.active_count += 1;
+                    }
+                    // Unstable 和 Disconnected 都归类为 Error
+                    TunnelHealthStatus::Unstable { .. } | TunnelHealthStatus::Disconnected => {
+                        acc.error_count += 1;
+                    }
+                }
+                acc
+            },
+        )
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -58,7 +84,15 @@ pub fn run() {
             });
             let tunnel_service = TunnelService::new();
 
-            let app_state = AppState::new(tunnel_service, settings);
+            let app_state = AppState::new(tunnel_service.clone(), settings);
+            let app_handle = app.handle();
+
+            tauri::async_runtime::block_on(async {
+                let tunnel_service = tunnel_service.clone();
+                let _ = tunnel_service
+                    .monitor_health_status(&app_handle.clone())
+                    .await;
+            });
 
             app.manage(app_state);
 

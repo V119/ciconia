@@ -19,6 +19,7 @@ pub struct TunnelHandle {
     pub config: ServerTunnelConfig,
 }
 
+#[derive(Clone)]
 pub struct TunnelManager {
     tunnels: Arc<RwLock<HashMap<Uuid, TunnelHandle>>>,
 }
@@ -81,6 +82,18 @@ impl TunnelManager {
             debug!("get_tunnel_health_state: not found");
             None
         }
+    }
+
+    pub async fn get_all_tunnel_health_state(&self) -> HashMap<Uuid, TunnelHealthStatus> {
+        let tunnels = self.tunnels.read().await;
+        let mut all_tunnel_health_state = HashMap::new();
+        for id in tunnels.keys() {
+            if let Some(health_status) = self.get_tunnel_health_state(*id).await {
+                all_tunnel_health_state.insert(*id, health_status);
+            }
+        }
+
+        all_tunnel_health_state
     }
 
     async fn send_command_to_tunnel(&self, id: &Uuid, cmd: TunnelCommand) -> Result<()> {

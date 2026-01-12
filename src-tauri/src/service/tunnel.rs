@@ -4,7 +4,9 @@ use crate::server::model::{ServerTunnelConfig, TunnelHealthStatus};
 use crate::server::ServerManager;
 use anyhow::Result;
 use log::{debug, error, info, warn};
+use tauri::AppHandle;
 
+#[derive(Clone)]
 pub struct TunnelService {
     server_manager: ServerManager,
 }
@@ -79,5 +81,9 @@ impl TunnelService {
     pub async fn get_tunnel_health_status(&self, id: String) -> Result<TunnelHealthStatus> {
         let health_status = self.server_manager.get_tunnel_health(&id).await;
         Ok(health_status)
+    }
+
+    pub async fn monitor_health_status(&self, app_handle: &AppHandle) -> Result<()> {
+        self.server_manager.monitor_tunnels_status(app_handle).await
     }
 }
