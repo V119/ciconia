@@ -1,9 +1,17 @@
 mod commands;
 mod database;
+mod error;
 mod server;
+mod service;
 mod settings;
 mod state;
 
+use crate::commands::docker::{fetch_containers, get_container_details};
+use crate::commands::settings::{get_settings, save_settings};
+use crate::commands::tunnel::{
+    delete_tunnel, get_tunnel_status, get_tunnels, save_tunnel, start_tunnel, stop_tunnel,
+};
+use crate::service::tunnel::TunnelService;
 use crate::state::AppState;
 use tauri::{
     image::Image,
@@ -11,6 +19,7 @@ use tauri::{
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     Emitter, Listener, Manager,
 };
+use tauri_plugin_log::{Target, TargetKind};
 
 #[derive(serde::Deserialize)]
 struct TrayStatusPayload {
@@ -28,41 +37,28 @@ pub fn run() {
         ))
         .setup(|app| {
             // Initialize App State
+            #[cfg(debug_assertions)] // only include this code on debug builds
+            {
+                let window = app.get_webview_window("main").unwrap();
+                window.open_devtools();
+            }
+
             let app_data_dir = app
                 .path()
                 .app_data_dir()
                 .expect("failed to get app data dir");
-            let db = database::DB::new(app_data_dir.clone());
-            let server = server::ServerManager::new();
-            server.init(app.handle().clone());
 
-            // Load settings from DB or migrate from file
-            let loaded_settings = tauri::async_runtime::block_on(async {
-                match db.load_settings().await {
-                    Ok(Some(s)) => s,
-                    Ok(None) => {
-                        let json_path = app_data_dir.join("settings.json");
-                        if json_path.exists() {
-                            if let Ok(content) = std::fs::read_to_string(&json_path) {
-                                let s: settings::AppSettings =
-                                    serde_json::from_str(&content).unwrap_or_default();
-                                // Save to DB
-                                let _ = db.save_settings(&s).await;
-                                s
-                            } else {
-                                settings::AppSettings::default()
-                            }
-                        } else {
-                            settings::AppSettings::default()
-                        }
-                    }
-                    Err(_) => settings::AppSettings::default(),
-                }
+            tauri::async_runtime::block_on(async {
+                database::DB::init(app_data_dir.clone()).await.unwrap();
             });
 
-            let settings = settings::SettingsManager::new(loaded_settings);
+            let settings = tauri::async_runtime::block_on(async {
+                let settings = settings::SettingsManager::new().await;
+                settings
+            });
+            let tunnel_service = TunnelService::new();
 
-            let app_state = state::AppState::new(db, server, settings);
+            let app_state = AppState::new(tunnel_service, settings);
 
             app.manage(app_state);
 
@@ -167,14 +163,17 @@ pub fn run() {
                 })
                 .build(app)?;
 
-            // Setup Log
-            if cfg!(debug_assertions) {
-                app.handle().plugin(
-                    tauri_plugin_log::Builder::default()
-                        .level(log::LevelFilter::Info)
-                        .build(),
-                )?;
-            }
+            // Setup Log - Enable for both debug and release builds with comprehensive targets
+            app.handle().plugin(
+                tauri_plugin_log::Builder::default()
+                    .level(log::LevelFilter::Info)
+                    .target(Target::new(TargetKind::Stdout))
+                    .target(Target::new(TargetKind::Webview))
+                    .target(Target::new(TargetKind::LogDir {
+                        file_name: Some("ciconia".to_string()),
+                    }))
+                    .build(),
+            )?;
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -188,16 +187,16 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
-            commands::tunnel::get_tunnels,
-            commands::tunnel::save_tunnel,
-            commands::tunnel::delete_tunnel,
-            commands::tunnel::start_tunnel,
-            commands::tunnel::stop_tunnel,
-            commands::tunnel::get_tunnel_status,
-            commands::docker::fetch_containers,
-            commands::docker::get_container_details,
-            commands::settings::get_settings,
-            commands::settings::save_settings
+            get_tunnels,
+            save_tunnel,
+            delete_tunnel,
+            start_tunnel,
+            stop_tunnel,
+            get_tunnel_status,
+            fetch_containers,
+            get_container_details,
+            get_settings,
+            save_settings
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

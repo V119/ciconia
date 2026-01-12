@@ -1,7 +1,8 @@
+use crate::error::{CommandError, CommandResult};
 use crate::settings::AppSettings;
 use crate::state::AppState;
 use log::{debug, error, info};
-use tauri::State;
+use tauri::{Manager, State};
 
 #[tauri::command]
 pub fn get_settings(state: State<'_, AppState>) -> AppSettings {
@@ -12,24 +13,20 @@ pub fn get_settings(state: State<'_, AppState>) -> AppSettings {
 }
 
 #[tauri::command]
-pub async fn save_settings(
-    state: State<'_, AppState>,
-    settings: AppSettings,
-) -> Result<(), String> {
+pub async fn save_settings(app: tauri::AppHandle, settings: AppSettings) -> CommandResult<()> {
     debug!("Saving application settings");
-    let db_result = state.db.save_settings(&settings).await;
-    match &db_result {
-        Ok(()) => debug!("Settings saved to database successfully"),
-        Err(e) => {
-            error!("Failed to save settings to database: {}", e);
-            return db_result;
-        }
-    };
 
-    let result = state.settings.save_settings(settings);
-    match &result {
-        Ok(()) => info!("Application settings saved successfully"),
-        Err(e) => error!("Failed to save application settings: {}", e),
+    // Also save to in-memory settings manager
+    let state: tauri::State<'_, AppState> = app.state::<AppState>();
+    let result = state.settings.save_settings(settings).await;
+    match result {
+        Ok(()) => {
+            info!("Application settings saved successfully");
+            Ok(())
+        }
+        Err(e) => {
+            error!("Failed to save application settings: {}", e);
+            Err(CommandError::from(e))
+        }
     }
-    result
 }

@@ -1,18 +1,17 @@
-use crate::database::DB;
-use crate::server::ServerManager;
+use crate::service::tunnel::TunnelService;
 use crate::settings::SettingsManager;
+use std::sync::Arc;
 
 pub struct AppState {
-    pub db: DB,
-    pub server: ServerManager,
+    pub tunnel_service: Arc<TunnelService>,
     pub settings: SettingsManager,
 }
 
 impl AppState {
-    pub fn new(db: DB, server: ServerManager, settings: SettingsManager) -> Self {
+    pub fn new(tunnel_service: TunnelService, settings: SettingsManager) -> Self {
+        let tunnel_service = Arc::new(tunnel_service);
         Self {
-            db,
-            server,
+            tunnel_service,
             settings,
         }
     }

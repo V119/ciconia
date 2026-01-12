@@ -1,3 +1,4 @@
+use crate::error::{CommandError, CommandResult};
 use log::{debug, error, info};
 use serde::{Deserialize, Serialize};
 use ssh2::Session;
@@ -87,7 +88,7 @@ fn connect_ssh(params: &SshParams) -> Result<Session, String> {
 }
 
 #[command]
-pub async fn fetch_containers(params: SshParams) -> Result<Vec<DockerContainer>, String> {
+pub async fn fetch_containers(params: SshParams) -> CommandResult<Vec<DockerContainer>> {
     debug!("Fetching Docker containers via SSH");
     let result = tauri::async_runtime::spawn_blocking(move || {
         let sess = connect_ssh(&params)?;
@@ -130,17 +131,28 @@ pub async fn fetch_containers(params: SshParams) -> Result<Vec<DockerContainer>,
         debug!("Fetched {} containers from Docker", containers.len());
         Ok(containers)
     })
-    .await
-    .map_err(|e| e.to_string())?;
+    .await;
 
-    match &result {
-        Ok(containers) => info!(
-            "Successfully fetched {} Docker containers",
-            containers.len()
-        ),
-        Err(e) => error!("Failed to fetch Docker containers: {}", e),
+    match result {
+        Ok(Ok(containers)) => {
+            info!(
+                "Successfully fetched {} Docker containers",
+                containers.len()
+            );
+            Ok(containers)
+        }
+        Ok(Err(e)) => {
+            error!("Failed to fetch Docker containers: {}", e);
+            Err(CommandError::from(anyhow::anyhow!(e)))
+        }
+        Err(e) => {
+            error!("Failed to fetch Docker containers: {}", e);
+            Err(CommandError::from(anyhow::anyhow!(format!(
+                "Spawn blocking error: {}",
+                e
+            ))))
+        }
     }
-    result
 }
 
 #[command]

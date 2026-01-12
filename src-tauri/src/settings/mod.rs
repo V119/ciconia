@@ -1,4 +1,7 @@
 pub use crate::database::models::AppSettings;
+use crate::database::DB;
+use anyhow::Result;
+use log::debug;
 use std::sync::Mutex;
 
 pub struct SettingsManager {
@@ -6,9 +9,10 @@ pub struct SettingsManager {
 }
 
 impl SettingsManager {
-    pub fn new(initial_settings: AppSettings) -> Self {
+    pub async fn new() -> Self {
+        let initial_settings = DB::load_settings().await.unwrap();
         Self {
-            settings: Mutex::new(initial_settings),
+            settings: Mutex::new(initial_settings.unwrap_or_else(AppSettings::default)),
         }
     }
 
@@ -16,8 +20,11 @@ impl SettingsManager {
         self.settings.lock().unwrap().clone()
     }
 
-    pub fn save_settings(&self, new_settings: AppSettings) -> Result<(), String> {
+    pub async fn save_settings(&self, new_settings: AppSettings) -> Result<()> {
+        let _ = DB::save_settings(&new_settings).await;
+        debug!("Settings saved to database successfully");
         *self.settings.lock().unwrap() = new_settings;
+
         Ok(())
     }
 }

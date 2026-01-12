@@ -1,172 +1,96 @@
 use crate::database::models::TunnelConfig;
+use crate::error::{CommandError, CommandResult};
+use crate::server::model::TunnelHealthStatus;
+use crate::service::tunnel::TunnelService;
 use crate::state::AppState;
-use log::{debug, error, info, warn};
-use std::net::{TcpStream, ToSocketAddrs};
-use std::time::{Duration, Instant};
-use tauri::{AppHandle, State};
+use log::debug;
+use std::sync::Arc;
+use tauri::{AppHandle, Manager};
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, Debug)]
 pub struct TunnelStatusResponse {
     is_running: bool,
-    ping: Option<u32>,
+    ping: Option<u128>,
 }
 
-#[tauri::command]
-pub async fn get_tunnels(state: State<'_, AppState>) -> Result<Vec<TunnelConfig>, String> {
-    debug!("Fetching all tunnels from database");
-    let result = state.db.load_tunnels().await;
-    match &result {
-        Ok(tunnels) => debug!("Successfully fetched {} tunnels", tunnels.len()),
-        Err(e) => error!("Failed to fetch tunnels: {}", e),
-    }
-    result
-}
-
-#[tauri::command]
-pub async fn save_tunnel(state: State<'_, AppState>, tunnel: TunnelConfig) -> Result<(), String> {
-    debug!("Saving tunnel {} to database", tunnel.id);
-    let result = state.db.save_tunnel(&tunnel).await;
-    match &result {
-        Ok(()) => info!("Tunnel {} saved successfully", tunnel.id),
-        Err(e) => error!("Failed to save tunnel {}: {}", tunnel.id, e),
-    }
-    result
-}
-
-#[tauri::command]
-pub async fn delete_tunnel(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), String> {
-    debug!("Deleting tunnel {}", id);
-    let result = state.db.delete_tunnel(&id).await;
-    match &result {
-        Ok(()) => info!("Tunnel {} deleted from database", id),
-        Err(e) => {
-            error!("Failed to delete tunnel {} from database: {}", id, e);
-            return result;
+impl From<&TunnelHealthStatus> for TunnelStatusResponse {
+    fn from(status: &TunnelHealthStatus) -> Self {
+        match status {
+            TunnelHealthStatus::Healthy { latency } => TunnelStatusResponse {
+                is_running: true,
+                ping: Some(latency.as_millis()),
+            },
+            TunnelHealthStatus::Unstable { .. } => TunnelStatusResponse {
+                is_running: false,
+                ping: None,
+            },
+            TunnelHealthStatus::Disconnected => TunnelStatusResponse {
+                is_running: false,
+                ping: None,
+            },
         }
-    };
+    }
+}
 
-    let stop_result = state.server.stop_tunnel(&app, &id);
-    match &stop_result {
-        Ok(()) => debug!("Tunnel {} stopped successfully", id),
-        Err(e) => warn!("Failed to stop tunnel {} before deletion: {}", id, e),
-    };
-
-    stop_result
+fn get_tunnel_service(app_handle: AppHandle) -> Arc<TunnelService> {
+    let state = app_handle.state::<AppState>();
+    state.tunnel_service.clone()
 }
 
 #[tauri::command]
-pub async fn start_tunnel(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<(), String> {
-    debug!("Starting tunnel {}", id);
-    let tunnels_result = state.db.load_tunnels().await;
-    let tunnels = match &tunnels_result {
-        Ok(tunnels) => {
-            debug!(
-                "Loaded {} tunnels for starting tunnel {}",
-                tunnels.len(),
-                id
-            );
-            tunnels
-        }
-        Err(e) => {
-            error!("Failed to load tunnels when starting tunnel {}: {}", id, e);
-            return tunnels_result.map(|_| ());
-        }
-    };
-
-    let config = tunnels.iter().find(|t| t.id == id).ok_or_else(|| {
-        let error_msg = "Tunnel not found".to_string();
-        error!("Tunnel {} not found when attempting to start", id);
-        error_msg
-    })?;
-
-    let result = state.server.start_tunnel(&app, config);
-    match &result {
-        Ok(()) => info!("Tunnel {} started successfully", id),
-        Err(e) => error!("Failed to start tunnel {}: {}", id, e),
-    }
-    result
+pub async fn get_tunnels(app_handle: AppHandle) -> CommandResult<Vec<TunnelConfig>> {
+    get_tunnel_service(app_handle)
+        .get_tunnels()
+        .await
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub fn stop_tunnel(app: AppHandle, state: State<'_, AppState>, id: String) -> Result<(), String> {
-    debug!("Stopping tunnel {}", id);
-    let result = state.server.stop_tunnel(&app, &id);
-    match &result {
-        Ok(()) => info!("Tunnel {} stopped successfully", id),
-        Err(e) => error!("Failed to stop tunnel {}: {}", id, e),
-    }
-    result
+pub async fn save_tunnel(app_handle: AppHandle, tunnel: TunnelConfig) -> CommandResult<()> {
+    get_tunnel_service(app_handle)
+        .save_tunnel(tunnel)
+        .await
+        .map_err(CommandError::from)
 }
 
 #[tauri::command]
-pub async fn get_tunnel_status(
-    state: State<'_, AppState>,
-    id: String,
-) -> Result<TunnelStatusResponse, String> {
-    debug!("Getting status for tunnel {}", id);
-    let is_running = state.server.is_running(&id);
-    let mut ping = None;
+pub async fn delete_tunnel(app_handle: AppHandle, id: String) -> CommandResult<()> {
+    get_tunnel_service(app_handle)
+        .delete_tunnel(id)
+        .await
+        .map_err(CommandError::from)
+}
 
-    if is_running {
-        debug!("Tunnel {} is running, checking connection", id);
-        let tunnels_result = state.db.load_tunnels().await;
-        if let Ok(tunnels) = tunnels_result {
-            if let Some(config) = tunnels.iter().find(|t| t.id == id) {
-                let addr = format!("{}:{}", config.ssh_host, config.ssh_port);
-                debug!("Pinging SSH server at {} for tunnel {}", addr, id);
-                // Measure TCP connect time
-                let start = Instant::now();
-                let connect_result = tauri::async_runtime::spawn_blocking(move || {
-                    // Resolve address first
-                    if let Ok(mut addrs) = addr.to_socket_addrs() {
-                        if let Some(socket_addr) = addrs.next() {
-                            return TcpStream::connect_timeout(
-                                &socket_addr,
-                                Duration::from_millis(1000),
-                            );
-                        }
-                    }
-                    Err(std::io::Error::other("Resolution failed"))
-                })
-                .await
-                .map_err(|e| e.to_string())?;
+#[tauri::command]
+pub async fn start_tunnel(app_handle: AppHandle, id: String) -> CommandResult<()> {
+    get_tunnel_service(app_handle)
+        .start_tunnel(id)
+        .await
+        .map_err(CommandError::from)
+}
 
-                if connect_result.is_ok() {
-                    let elapsed = start.elapsed().as_millis() as u32;
-                    ping = Some(elapsed);
-                    debug!("Tunnel {} ping: {}ms", id, elapsed);
-                } else {
-                    debug!("Failed to ping SSH server for tunnel {}", id);
-                }
-            } else {
-                warn!(
-                    "Tunnel configuration not found for ID {} when checking status",
-                    id
-                );
-            }
-        } else {
-            error!(
-                "Failed to load tunnels when checking status for tunnel {}: {}",
-                id,
-                tunnels_result.unwrap_err()
-            );
-        }
-    } else {
-        debug!("Tunnel {} is not running", id);
-    }
+#[tauri::command]
+pub async fn stop_tunnel(app: AppHandle, id: String) -> CommandResult<()> {
+    get_tunnel_service(app)
+        .stop_tunnel(id)
+        .await
+        .map_err(CommandError::from)
+}
 
-    let response = TunnelStatusResponse { is_running, ping };
+#[tauri::command]
+pub async fn get_tunnel_status(app: AppHandle, id: String) -> CommandResult<TunnelStatusResponse> {
+    let health_status = get_tunnel_service(app)
+        .get_tunnel_health_status(id)
+        .await
+        .map_err(CommandError::from)?;
     debug!(
-        "Status for tunnel {}: running={}, ping={:?}",
-        id, is_running, ping
+        "get_tunnel_status command health status: {:?}",
+        health_status
     );
-    Ok(response)
+    let tunnel_status = TunnelStatusResponse::from(&health_status);
+    debug!(
+        "get_tunnel_status command tunnel status: {:?}",
+        tunnel_status
+    );
+    Ok(tunnel_status)
 }
