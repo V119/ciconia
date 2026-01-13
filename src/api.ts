@@ -67,6 +67,9 @@ export async function stopTunnel(id: string): Promise<void> {
 export interface TunnelStatusResponse {
   is_running: boolean;
   ping: number | null;
+  state?: string;
+  send_bytes?: number;
+  recv_bytes?: number;
 }
 
 export async function getTunnelStatus(id: string): Promise<TunnelStatusResponse> {

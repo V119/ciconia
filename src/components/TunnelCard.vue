@@ -20,6 +20,40 @@ const isHovered = ref(false);
 const handleToggle = () => {
   emit('toggle', props.tunnel.id);
 };
+
+const getStatusClass = (state: string) => {
+  if (!state) return 'text-slate-500';
+  switch (state.toLowerCase()) {
+    case 'running':
+      return 'text-green-400';
+    case 'starting':
+      return 'text-yellow-400';
+    case 'stopping':
+      return 'text-orange-400';
+    case 'error':
+      return 'text-red-400';
+    default:
+      return 'text-slate-500';
+  }
+};
+
+const getStatusText = (state: string) => {
+  if (!state) return 'Unknown';
+  if (state.startsWith('error:')) {
+    return 'Error';
+  }
+  return state.charAt(0).toUpperCase() + state.slice(1);
+};
+
+const formatBytes = (bytes: number) => {
+  if (bytes === 0) return '0B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  const sizeIndex = Math.min(i, sizes.length - 1);
+  const size = sizes[sizeIndex] ?? 'B';
+  return parseFloat((bytes / Math.pow(k, sizeIndex)).toFixed(2)) + size;
+};
 </script>
 
 <template>
@@ -45,14 +79,24 @@ const handleToggle = () => {
 
     <!-- Right: Status & Actions -->
     <div class="flex items-center gap-4">
+      <!-- Ping/Latency -->
       <div v-if="status.is_running && status.ping !== null" class="flex items-center gap-1.5 text-xs font-medium text-emerald-400">
         <Activity :size="14" />
         <span>{{ status.ping }}ms</span>
       </div>
       
-      <span class="text-xs font-medium" :class="status.is_running ? 'text-green-400' : 'text-slate-500'">
-        {{ status.is_running ? 'Active' : 'Off' }}
+      <!-- Status indicator based on state -->
+      <span class="text-xs font-medium" :class="getStatusClass(status.state || 'unknown')">
+        {{ getStatusText(status.state || 'unknown') }}
       </span>
+      
+      <!-- Traffic indicators when running -->
+      <div v-if="status.is_running" class="flex flex-col text-xs text-slate-400">
+        <div class="flex gap-2">
+          <span>↑{{ formatBytes(status.send_bytes || 0) }}</span>
+          <span>↓{{ formatBytes(status.recv_bytes || 0) }}</span>
+        </div>
+      </div>
       
       <!-- Toggle Switch -->
       <Switch :model-value="status.is_running" @update:model-value="handleToggle" />

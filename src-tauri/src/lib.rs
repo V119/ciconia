@@ -11,7 +11,7 @@ use crate::commands::settings::{get_settings, save_settings};
 use crate::commands::tunnel::{
     delete_tunnel, get_tunnel_status, get_tunnels, save_tunnel, start_tunnel, stop_tunnel,
 };
-use crate::server::model::TunnelHealthStatus;
+use crate::server::model::{TunnelMetric, TunnelState};
 use crate::service::tunnel::TunnelService;
 use crate::state::AppState;
 use std::collections::HashMap;
@@ -23,33 +23,31 @@ use tauri::{
 };
 use tauri_plugin_log::{Target, TargetKind};
 
-#[derive(serde::Deserialize, serde::Serialize)]
+#[derive(serde::Deserialize, serde::Serialize, Default, Debug)]
 struct TrayStatusPayload {
     active_count: usize,
+    unavailable_count: usize,
     error_count: usize,
 }
 
 impl TrayStatusPayload {
-    fn from_health_map<K>(map: &HashMap<K, TunnelHealthStatus>) -> Self {
-        map.values().fold(
-            TrayStatusPayload {
-                active_count: 0,
-                error_count: 0,
-            },
-            |mut acc, status| {
-                match status {
+    fn from_tunnel_metric_map<K>(map: &HashMap<K, TunnelMetric>) -> Self {
+        map.values()
+            .fold(TrayStatusPayload::default(), |mut acc, metric| {
+                match metric.tunnel_state {
                     // 只有 Healthy 算作 Active
-                    TunnelHealthStatus::Healthy { .. } => {
+                    TunnelState::Running(_) => {
                         acc.active_count += 1;
                     }
-                    // Unstable 和 Disconnected 都归类为 Error
-                    TunnelHealthStatus::Unstable { .. } | TunnelHealthStatus::Disconnected => {
+                    TunnelState::Error(_) => {
                         acc.error_count += 1;
+                    }
+                    _ => {
+                        acc.unavailable_count += 1;
                     }
                 }
                 acc
-            },
-        )
+            })
     }
 }
 

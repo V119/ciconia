@@ -1,6 +1,6 @@
 use crate::server::manager::TunnelManager;
 
-use crate::server::model::{ServerTunnelConfig, TunnelHealthStatus};
+use crate::server::model::{ServerTunnelConfig, TunnelMetric};
 use crate::TrayStatusPayload;
 use anyhow::{anyhow, Result};
 use std::sync::Arc;
@@ -39,13 +39,13 @@ impl ServerManager {
         }
     }
 
-    pub async fn get_tunnel_health(&self, id: &str) -> TunnelHealthStatus {
+    pub async fn get_tunnel_metric(&self, id: &str) -> TunnelMetric {
         if let Ok(uuid) = Uuid::parse_str(id) {
-            let state = self.tunnel_manager.get_tunnel_health_state(uuid).await;
+            let state = self.tunnel_manager.get_tunnel_metric(uuid).await;
 
-            state.unwrap_or(TunnelHealthStatus::Disconnected)
+            state.unwrap_or(TunnelMetric::default())
         } else {
-            TunnelHealthStatus::Disconnected
+            TunnelMetric::default()
         }
     }
 
@@ -67,8 +67,9 @@ impl ServerManager {
             loop {
                 interval.tick().await;
                 let all_status = manager.get_all_tunnel_health_state().await;
-                let payload = TrayStatusPayload::from_health_map(&all_status);
-
+                println!("all_status: {:?}", all_status);
+                let payload = TrayStatusPayload::from_tunnel_metric_map(&all_status);
+                println!("payload: {:?}", &payload);
                 let _ = app_handle.emit("update-tray-status", &payload);
             }
         });

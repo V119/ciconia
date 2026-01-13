@@ -68,17 +68,27 @@ impl TryFrom<&TunnelModel> for ServerTunnelConfig {
 }
 
 #[derive(Clone, Debug, PartialEq, Default)]
-pub enum TunnelLifecycleState {
+pub enum TunnelState {
     #[default]
     Stopped,
     Starting,
-    Running,
+    Running(Duration),
     Stopping,
     Error(String),
 }
 
+impl From<&SSHStatus> for TunnelState {
+    fn from(status: &SSHStatus) -> Self {
+        match status {
+            SSHStatus::Healthy { latency } => TunnelState::Running(*latency),
+            SSHStatus::Unstable { reason } => TunnelState::Error(reason.clone()),
+            SSHStatus::Disconnected => TunnelState::Stopped,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Default)]
-pub enum TunnelHealthStatus {
+pub enum SSHStatus {
     Healthy {
         latency: Duration,
     },
@@ -90,21 +100,39 @@ pub enum TunnelHealthStatus {
     Disconnected,
 }
 
-#[derive(Debug, Clone)]
-pub enum SshEvent {
-    HealthStatus(TunnelHealthStatus),
-    #[allow(dead_code)]
-    Bytes {
-        tx_bytes: u64,
-        rx_bytes: u64,
-    },
+#[derive(Debug, Clone, Default)]
+pub struct Traffic {
+    pub send_bytes: u128,
+    pub recv_bytes: u128,
+}
+
+impl Traffic {
+    pub fn append_traffic(&mut self, send_bytes: u128, recv_bytes: u128) {
+        self.send_bytes += send_bytes;
+        self.recv_bytes += recv_bytes;
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct SSHEvent {
+    pub ssh_status: SSHStatus,
+    pub traffic: Traffic,
 }
 
 #[derive(Clone, Debug, Default)]
 #[allow(dead_code)]
-pub struct TunnelState {
-    pub health_status: TunnelHealthStatus,
-    pub lifecycle_state: TunnelLifecycleState,
+pub struct TunnelMetric {
+    pub tunnel_state: TunnelState,
+    pub traffic: Traffic,
+}
+
+impl From<&SSHEvent> for TunnelMetric {
+    fn from(event: &SSHEvent) -> Self {
+        Self {
+            tunnel_state: TunnelState::from(&event.ssh_status),
+            traffic: event.traffic.clone(),
+        }
+    }
 }
 
 #[derive(Debug)]

@@ -1,6 +1,6 @@
 use crate::database::models::TunnelConfig;
 use crate::error::{CommandError, CommandResult};
-use crate::server::model::TunnelHealthStatus;
+use crate::server::model::{TunnelMetric, TunnelState};
 use crate::service::tunnel::TunnelService;
 use crate::state::AppState;
 use log::debug;
@@ -11,23 +11,32 @@ use tauri::{AppHandle, Manager};
 pub struct TunnelStatusResponse {
     is_running: bool,
     ping: Option<u128>,
+    state: String,
+    send_bytes: u128,
+    recv_bytes: u128,
 }
 
-impl From<&TunnelHealthStatus> for TunnelStatusResponse {
-    fn from(status: &TunnelHealthStatus) -> Self {
-        match status {
-            TunnelHealthStatus::Healthy { latency } => TunnelStatusResponse {
-                is_running: true,
-                ping: Some(latency.as_millis()),
-            },
-            TunnelHealthStatus::Unstable { .. } => TunnelStatusResponse {
-                is_running: false,
-                ping: None,
-            },
-            TunnelHealthStatus::Disconnected => TunnelStatusResponse {
-                is_running: false,
-                ping: None,
-            },
+impl From<&TunnelMetric> for TunnelStatusResponse {
+    fn from(tunnel_metric: &TunnelMetric) -> Self {
+        let is_running = matches!(tunnel_metric.tunnel_state, TunnelState::Running(_));
+        let ping = match &tunnel_metric.tunnel_state {
+            TunnelState::Running(duration) => Some(duration.as_millis()),
+            _ => None,
+        };
+        let state = match &tunnel_metric.tunnel_state {
+            TunnelState::Stopped => "stopped".to_string(),
+            TunnelState::Starting => "starting".to_string(),
+            TunnelState::Running(_) => "running".to_string(),
+            TunnelState::Stopping => "stopping".to_string(),
+            TunnelState::Error(e) => format!("error: {}", e),
+        };
+
+        Self {
+            is_running,
+            ping,
+            state,
+            send_bytes: tunnel_metric.traffic.send_bytes,
+            recv_bytes: tunnel_metric.traffic.recv_bytes,
         }
     }
 }

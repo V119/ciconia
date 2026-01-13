@@ -1,20 +1,14 @@
 use crate::server::actor::TunnelActor;
-use crate::server::model::{
-    ServerTunnelConfig, TunnelCommand, TunnelHealthStatus, TunnelLifecycleState,
-};
+use crate::server::model::{ServerTunnelConfig, TunnelCommand, TunnelMetric};
 use anyhow::{anyhow, Result};
-use log::debug;
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::{mpsc, watch, RwLock};
 use uuid::Uuid;
 
 pub struct TunnelHandle {
     pub cmd_tx: mpsc::Sender<TunnelCommand>,
-    #[allow(dead_code)]
-    pub state_rx: watch::Receiver<TunnelLifecycleState>,
-    pub health_rx: watch::Receiver<TunnelHealthStatus>,
+    pub tunnel_metric_rx: watch::Receiver<TunnelMetric>,
     #[allow(dead_code)]
     pub config: ServerTunnelConfig,
 }
@@ -33,20 +27,16 @@ impl TunnelManager {
 
     pub async fn add_tunnel(&self, config: &ServerTunnelConfig) {
         let (cmd_tx, cmd_rx) = mpsc::channel::<TunnelCommand>(32);
-        let (state_tx, state_rx) = watch::channel(TunnelLifecycleState::Stopped);
-        let (health_tx, health_rx) = watch::channel(TunnelHealthStatus::Healthy {
-            latency: Duration::ZERO,
-        });
+        let (tunnel_metric_tx, tunnel_metric_rx) = watch::channel(TunnelMetric::default());
 
         let id = config.id;
 
-        let actor = TunnelActor::new(config.clone(), cmd_rx, state_tx, health_tx);
+        let actor = TunnelActor::new(config.clone(), cmd_rx, tunnel_metric_tx);
         tokio::task::spawn(actor.run());
 
         let handle = TunnelHandle {
             cmd_tx,
-            state_rx,
-            health_rx,
+            tunnel_metric_rx,
             config: config.clone(),
         };
 
@@ -72,28 +62,28 @@ impl TunnelManager {
             .await
     }
 
-    pub async fn get_tunnel_health_state(&self, id: Uuid) -> Option<TunnelHealthStatus> {
+    pub async fn get_tunnel_metric(&self, id: Uuid) -> Option<TunnelMetric> {
         let tunnels = self.tunnels.read().await;
         if let Some(handle) = tunnels.get(&id) {
-            let health_status = handle.health_rx.borrow().clone();
-            debug!("get_tunnel_health_state: {:?}", health_status);
-            Some(health_status)
+            let tunnel_metric = handle.tunnel_metric_rx.borrow().clone();
+            println!("get_tunnel_health_state: {:?}", tunnel_metric);
+            Some(tunnel_metric)
         } else {
-            debug!("get_tunnel_health_state: not found");
+            println!("get_tunnel_health_state: not found");
             None
         }
     }
 
-    pub async fn get_all_tunnel_health_state(&self) -> HashMap<Uuid, TunnelHealthStatus> {
+    pub async fn get_all_tunnel_health_state(&self) -> HashMap<Uuid, TunnelMetric> {
         let tunnels = self.tunnels.read().await;
-        let mut all_tunnel_health_state = HashMap::new();
+        let mut all_tunnel_metric_state = HashMap::new();
         for id in tunnels.keys() {
-            if let Some(health_status) = self.get_tunnel_health_state(*id).await {
-                all_tunnel_health_state.insert(*id, health_status);
+            if let Some(health_status) = self.get_tunnel_metric(*id).await {
+                all_tunnel_metric_state.insert(*id, health_status);
             }
         }
 
-        all_tunnel_health_state
+        all_tunnel_metric_state
     }
 
     async fn send_command_to_tunnel(&self, id: &Uuid, cmd: TunnelCommand) -> Result<()> {

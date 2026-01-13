@@ -1,6 +1,6 @@
 use crate::database::models::TunnelConfig;
 use crate::database::DB;
-use crate::server::model::{ServerTunnelConfig, TunnelHealthStatus};
+use crate::server::model::{ServerTunnelConfig, TunnelMetric};
 use crate::server::ServerManager;
 use anyhow::Result;
 use log::{debug, error, info, warn};
@@ -78,9 +78,9 @@ impl TunnelService {
         }
     }
 
-    pub async fn get_tunnel_health_status(&self, id: String) -> Result<TunnelHealthStatus> {
-        let health_status = self.server_manager.get_tunnel_health(&id).await;
-        Ok(health_status)
+    pub async fn get_tunnel_health_status(&self, id: String) -> Result<TunnelMetric> {
+        let tunnel_metric = self.server_manager.get_tunnel_metric(&id).await;
+        Ok(tunnel_metric)
     }
 
     pub async fn monitor_health_status(&self, app_handle: &AppHandle) -> Result<()> {

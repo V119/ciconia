@@ -1,19 +1,22 @@
-use crate::server::model::{ServerTunnelConfig, SshEvent, TunnelAuth};
+use crate::server::model::{SSHEvent, ServerTunnelConfig, TunnelAuth};
 use anyhow::{anyhow, Context, Result};
 use russh::client;
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg, PublicKey};
 
-use crate::server::model::TunnelHealthStatus;
+use crate::server::model::SSHStatus;
 use log::debug;
+use russh::client::Handle;
 use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::mpsc;
+use tokio::sync::watch;
 use tokio::time::{timeout, Duration, Instant};
-use tokio_util::sync::{CancellationToken, DropGuard};
+use tokio_util::sync::CancellationToken;
 
-pub struct SshSession {
-    pub event_rx: mpsc::Receiver<SshEvent>,
-    _shutdown_guard: DropGuard,
+pub struct Ssh {
+    session: Arc<Handle<ClientHandler>>,
+    config: ServerTunnelConfig,
+    pub event_rx: Option<watch::Receiver<SSHEvent>>,
+    shutdown_token: CancellationToken,
 }
 
 #[derive(Clone, Debug, Copy)]
@@ -32,74 +35,87 @@ impl client::Handler for ClientHandler {
     }
 }
 
-pub async fn ssh_forward(config: ServerTunnelConfig) -> Result<SshSession> {
-    // 配置客户端
-    let ssh_config = client::Config {
-        keepalive_interval: Some(Duration::from_secs(30)),
-        ..Default::default()
-    };
-    let ssh_config = Arc::new(ssh_config);
+impl Ssh {
+    pub async fn init(config: ServerTunnelConfig) -> Result<Ssh> {
+        // 配置客户端
+        let ssh_config = client::Config {
+            keepalive_interval: Some(Duration::from_secs(30)),
+            ..Default::default()
+        };
+        let ssh_config = Arc::new(ssh_config);
 
-    let handler = ClientHandler;
+        let handler = ClientHandler;
 
-    let target = format!("{}:{}", config.ssh_host, config.ssh_port);
-    println!("Connecting to {}", target);
-    let ssh_addr = tokio::net::lookup_host(&target)
-        .await
-        .context("Failed to resolve hostname")?
-        .next()
-        .ok_or_else(|| anyhow::anyhow!("Hostname resolved but no IP found"))?;
+        let target = format!("{}:{}", config.ssh_host, config.ssh_port);
+        println!("Connecting to {}", target);
+        let ssh_addr = tokio::net::lookup_host(&target)
+            .await
+            .context("Failed to resolve hostname")?
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Hostname resolved but no IP found"))?;
 
-    // 连接并认证
-    let mut session = client::connect(ssh_config, ssh_addr, handler).await?;
-    let auth_res = match config.auth {
-        TunnelAuth::Password(password) => {
-            session
-                .authenticate_password(&config.ssh_user, password)
-                .await?
+        // 连接并认证
+        let mut session = client::connect(ssh_config, ssh_addr, handler).await?;
+        let auth_res = match &config.auth {
+            TunnelAuth::Password(password) => {
+                session
+                    .authenticate_password(&config.ssh_user, password)
+                    .await?
+            }
+            TunnelAuth::Key(key_path) => {
+                let key_pair =
+                    load_secret_key(key_path, None).context("Failed to load private key")?;
+                session
+                    .authenticate_publickey(
+                        &config.ssh_user,
+                        PrivateKeyWithHashAlg::new(
+                            Arc::new(key_pair),
+                            session.best_supported_rsa_hash().await?.flatten(),
+                        ),
+                    )
+                    .await?
+            }
+        };
+
+        if !auth_res.success() {
+            return Err(anyhow::anyhow!("Failed to authenticate"));
         }
-        TunnelAuth::Key(key_path) => {
-            let key_pair = load_secret_key(key_path, None).context("Failed to load private key")?;
-            session
-                .authenticate_publickey(
-                    &config.ssh_user,
-                    PrivateKeyWithHashAlg::new(
-                        Arc::new(key_pair),
-                        session.best_supported_rsa_hash().await?.flatten(),
-                    ),
-                )
-                .await?
-        }
-    };
 
-    if !auth_res.success() {
-        return Err(anyhow::anyhow!("Failed to authenticate"));
+        println!("SSH Authentication Complete");
+
+        Ok(Self {
+            session: Arc::new(session),
+            config,
+            event_rx: None,
+            shutdown_token: CancellationToken::new(),
+        })
     }
 
-    println!("SSH Authentication Complete");
+    pub fn shutdown(&self) {
+        println!("SSH shutdown triggered");
+        self.shutdown_token.cancel();
+    }
 
-    // 监听本地端口
-    let local_bind_addr = format!("{}:{}", config.local_host, config.local_port);
-    let listener = TcpListener::bind(&local_bind_addr)
-        .await
-        .context(format!("Failed to bind SSH server: {local_bind_addr}"))?;
-    println!(
-        "Tunnel started: Local {} -> Remote {}:{}",
-        local_bind_addr, config.remote_host, config.remote_port
-    );
+    pub async fn ssh_forward(&mut self) -> Result<()> {
+        // 监听本地端口
+        let local_bind_addr = format!("{}:{}", self.config.local_host, self.config.local_port);
+        let listener = TcpListener::bind(&local_bind_addr)
+            .await
+            .context(format!("Failed to bind SSH server: {local_bind_addr}"))?;
+        println!(
+            "Tunnel started: Local {} -> Remote {}:{}",
+            local_bind_addr, self.config.remote_host, self.config.remote_port
+        );
 
-    let session = Arc::new(session);
-    let (event_tx, event_rx) = mpsc::channel::<SshEvent>(32);
+        let (event_tx, event_rx) = watch::channel::<SSHEvent>(SSHEvent::default());
 
-    let session_monitor = session.clone();
-    let session_forward = session.clone();
-    // 1. 创建取消令牌
-    let token = CancellationToken::new();
+        let session_monitor = self.session.clone();
+        let session_forward = self.session.clone();
+        // 1. 创建取消令牌
+        let monitor_token = self.shutdown_token.clone();
+        let listener_token = self.shutdown_token.clone();
+        let config = self.config.clone();
 
-    let monitor_token = token.clone();
-    let listener_token = token.clone();
-
-    tokio::spawn(async move {
         let monitor_tx = event_tx.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
@@ -110,30 +126,23 @@ pub async fn ssh_forward(config: ServerTunnelConfig) -> Result<SshSession> {
                         break;
                     }
                     _ = interval.tick() => {
-                        let start = Instant::now();
                         if session_monitor.is_closed() {
-                            debug!("Send SSH Server Health Status: {:?}", SshEvent::HealthStatus(TunnelHealthStatus::Disconnected));
-                            let _ = monitor_tx.send(SshEvent::HealthStatus(TunnelHealthStatus::Disconnected)).await;
+                            println!("Send SSH Server Health Status: {:?}", SSHStatus::Disconnected);
+                            monitor_tx.send_modify(|s| {
+                                s.ssh_status = SSHStatus::Disconnected;
+                            });
                             break;
                         }
 
-                        let ping_request_future= session_monitor.send_ping();
-
-                        let health_status = match timeout(Duration::from_secs(5), ping_request_future).await {
+                        let start = Instant::now();
+                        match timeout(Duration::from_secs(5), session_monitor.send_ping()).await {
                             Ok(Ok(_)) => {
-                                let latency = start.elapsed();
-                                TunnelHealthStatus::Healthy { latency }
+                                monitor_tx.send_modify(|s| s.ssh_status = SSHStatus::Healthy { latency: start.elapsed() });
                             }
-                            Ok(Err(e)) => {
-                                TunnelHealthStatus::Unstable { reason: e.to_string() }
+                            _ => {
+                                monitor_tx.send_modify(|s| s.ssh_status = SSHStatus::Unstable { reason: "Timeout/Err".into() });
                             }
-                            Err(_) => {
-                                TunnelHealthStatus::Unstable { reason: String::from("Timeout reached") }
-                            }
-                        };
-                        debug!("Send SSH Server Health Status: {:?}", health_status);
-
-                        let _ = monitor_tx.send(SshEvent::HealthStatus(health_status)).await;
+                        }
                     }
                 }
             }
@@ -163,10 +172,12 @@ pub async fn ssh_forward(config: ServerTunnelConfig) -> Result<SshSession> {
                                         _ = child_token.cancelled() => {
                                                 println!("Listener task shutting down due to cancellation");
                                         }
-                                        res = handle_forward(session, socket, remote_host, remote_port as u32) => {
+                                        res = Ssh::handle_forward(session, socket, remote_host, remote_port as u32) => {
                                             match res {
                                                 Ok((bytes_tx, bytes_rx)) => {
-                                                    let _ = tx_traffic.send(SshEvent::Bytes {tx_bytes: bytes_tx, rx_bytes: bytes_rx}).await;
+                                                    tx_traffic.send_modify(|s| {
+                                                        s.traffic.append_traffic(bytes_tx as u128, bytes_rx as u128);
+                                                    });
                                                 }
                                                 Err(e) => eprintln!("Connection {} Error: {:?}", src_addr, e),
                                             }
@@ -183,44 +194,43 @@ pub async fn ssh_forward(config: ServerTunnelConfig) -> Result<SshSession> {
                 }
             }
         });
-    });
 
-    Ok(SshSession {
-        event_rx,
-        _shutdown_guard: token.drop_guard(),
-    })
-}
+        self.event_rx = Some(event_rx);
 
-async fn handle_forward(
-    session: Arc<client::Handle<ClientHandler>>,
-    mut stream: TcpStream,
-    remote_host: String,
-    remote_port: u32,
-) -> Result<(u64, u64)> {
-    let time_out = 10;
-    let channel = timeout(
-        Duration::from_secs(time_out),
-        session.channel_open_direct_tcpip(&remote_host, remote_port, "0.0.0.0", 0),
-    )
-    .await
-    .with_context(|| format!("Open SSH channel time_out: {time_out}"))?
-    .map_err(|e| anyhow!("Failed to open SSH channel, {remote_host}, {remote_port}, {e:#}"))?;
+        Ok(())
+    }
 
-    let ssh_stream = channel.into_stream();
-    let (mut ri, mut wi) = stream.split();
-    let (mut ro, mut wo) = tokio::io::split(ssh_stream);
+    async fn handle_forward(
+        session: Arc<client::Handle<ClientHandler>>,
+        mut stream: TcpStream,
+        remote_host: String,
+        remote_port: u32,
+    ) -> Result<(u64, u64)> {
+        let time_out = 10;
+        let channel = timeout(
+            Duration::from_secs(time_out),
+            session.channel_open_direct_tcpip(&remote_host, remote_port, "0.0.0.0", 0),
+        )
+        .await
+        .with_context(|| format!("Open SSH channel time_out: {time_out}"))?
+        .map_err(|e| anyhow!("Failed to open SSH channel, {remote_host}, {remote_port}, {e:#}"))?;
 
-    let client_to_server = tokio::io::copy(&mut ri, &mut wo);
-    let server_to_client = tokio::io::copy(&mut ro, &mut wi);
+        let ssh_stream = channel.into_stream();
+        let (mut ri, mut wi) = stream.split();
+        let (mut ro, mut wo) = tokio::io::split(ssh_stream);
 
-    match tokio::try_join!(client_to_server, server_to_client) {
-        Ok((bytes_tx, bytes_rx)) => {
-            println!("Traffic: TX {} bytes, RX {} bytes", bytes_tx, bytes_rx);
-            Ok((bytes_tx, bytes_rx))
-        }
-        Err(e) => {
-            println!("Traffic: Failed to write to SSH channel, {e}");
-            Err(e.into())
+        let client_to_server = tokio::io::copy(&mut ri, &mut wo);
+        let server_to_client = tokio::io::copy(&mut ro, &mut wi);
+
+        match tokio::try_join!(client_to_server, server_to_client) {
+            Ok((bytes_tx, bytes_rx)) => {
+                println!("Traffic: TX {} bytes, RX {} bytes", bytes_tx, bytes_rx);
+                Ok((bytes_tx, bytes_rx))
+            }
+            Err(e) => {
+                println!("Traffic: Failed to write to SSH channel, {e}");
+                Err(e.into())
+            }
         }
     }
 }
