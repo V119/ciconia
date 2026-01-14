@@ -1,6 +1,11 @@
 use crate::database::entity::tunnel_config::Model as TunnelModel;
 use anyhow::{anyhow, Context, Result};
+use std::pin::Pin;
+use std::sync::atomic::AtomicU64;
+use std::sync::Arc;
+use std::task::Poll;
 use std::time::Duration;
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -111,6 +116,11 @@ impl Traffic {
         self.send_bytes += send_bytes;
         self.recv_bytes += recv_bytes;
     }
+
+    pub fn set(&mut self, send_bytes: u128, recv_bytes: u128) {
+        self.send_bytes = send_bytes;
+        self.recv_bytes = recv_bytes;
+    }
 }
 
 #[derive(Debug, Clone, Default)]
@@ -140,4 +150,66 @@ pub enum TunnelCommand {
     Start,
     Stop,
     Remove,
+}
+
+pub struct TrafficCounter<T> {
+    inner: T,
+    count: Arc<AtomicU64>,
+}
+
+impl<T> TrafficCounter<T> {
+    pub fn new(inner: T, count: Arc<AtomicU64>) -> Self {
+        TrafficCounter {
+            inner,
+            count: count.clone(),
+        }
+    }
+}
+
+impl<T: AsyncRead + Unpin> AsyncRead for TrafficCounter<T> {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        let before = buf.filled().len();
+        let poll = Pin::new(&mut self.inner).poll_read(cx, buf);
+        let after = buf.filled().len();
+        if after > before {
+            self.count.fetch_add(
+                (after - before) as u64,
+                std::sync::atomic::Ordering::Relaxed,
+            );
+        }
+        poll
+    }
+}
+
+impl<T: AsyncWrite + Unpin> AsyncWrite for TrafficCounter<T> {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        let poll = Pin::new(&mut self.inner).poll_write(cx, buf);
+        if let Poll::Ready(Ok(size)) = poll {
+            self.count
+                .fetch_add(size as u64, std::sync::atomic::Ordering::Relaxed);
+        }
+        poll
+    }
+
+    fn poll_flush(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
 }

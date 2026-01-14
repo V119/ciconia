@@ -108,16 +108,15 @@ impl TunnelActor {
                         s.tunnel_state = TunnelState::Error("Channel closed".into())
                     });
                     break;
+                } else {
+                    let event = event_rx.borrow_and_update().clone();
+                    metric_tx.send_modify(|s| {
+                        println!("actor send event: {:?}", event);
+                        s.traffic
+                            .set(event.traffic.send_bytes, event.traffic.recv_bytes);
+                        s.tunnel_state = TunnelState::from(&event.ssh_status);
+                    });
                 }
-
-                let event = event_rx.borrow_and_update().clone();
-                // debug!("Event: {:?}", event);
-
-                metric_tx.send_modify(|s| {
-                    s.traffic
-                        .append_traffic(event.traffic.send_bytes, event.traffic.recv_bytes);
-                    s.tunnel_state = TunnelState::from(&event.ssh_status);
-                });
             }
         });
 

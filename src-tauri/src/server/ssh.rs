@@ -1,16 +1,20 @@
-use crate::server::model::{SSHEvent, ServerTunnelConfig, TunnelAuth};
-use anyhow::{anyhow, Context, Result};
-use russh::client;
-use russh::keys::{load_secret_key, PrivateKeyWithHashAlg, PublicKey};
-
-use crate::server::model::SSHStatus;
-use log::debug;
-use russh::client::Handle;
+use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
+
+use anyhow::{anyhow, Context, Result};
+use log::debug;
+use russh::client::{self, Handle};
+use russh::keys::{load_secret_key, PrivateKeyWithHashAlg, PublicKey};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
 use tokio::time::{timeout, Duration, Instant};
 use tokio_util::sync::CancellationToken;
+
+use crate::server::model::{SSHEvent, SSHStatus, ServerTunnelConfig, TrafficCounter, TunnelAuth};
+
+// =============================================================================
+// Struct Definitions
+// =============================================================================
 
 pub struct Ssh {
     session: Arc<Handle<ClientHandler>>,
@@ -30,32 +34,94 @@ impl client::Handler for ClientHandler {
         _server_public_key: &PublicKey,
     ) -> Result<bool, Self::Error> {
         println!("Server Public Key: {:?}", _server_public_key);
-
         Ok(true)
     }
 }
 
+// =============================================================================
+// Implementation
+// =============================================================================
+
 impl Ssh {
+    /// 初始化 SSH 连接
     pub async fn init(config: ServerTunnelConfig) -> Result<Ssh> {
-        // 配置客户端
-        let ssh_config = client::Config {
+        let ssh_config = Arc::new(client::Config {
             keepalive_interval: Some(Duration::from_secs(30)),
             ..Default::default()
-        };
-        let ssh_config = Arc::new(ssh_config);
+        });
 
-        let handler = ClientHandler;
+        // 1. 解析地址
+        let ssh_addr = Self::resolve_addr(&config.ssh_host, config.ssh_port).await?;
 
-        let target = format!("{}:{}", config.ssh_host, config.ssh_port);
-        println!("Connecting to {}", target);
-        let ssh_addr = tokio::net::lookup_host(&target)
+        // 2. 连接并认证
+        println!("Connecting to {}:{}", config.ssh_host, config.ssh_port);
+        let mut session = client::connect(ssh_config, ssh_addr, ClientHandler).await?;
+
+        Self::authenticate_session(&mut session, &config).await?;
+
+        println!("SSH Authentication Complete");
+
+        Ok(Self {
+            session: Arc::new(session),
+            config,
+            event_rx: None,
+            shutdown_token: CancellationToken::new(),
+        })
+    }
+
+    /// 关闭连接
+    pub fn shutdown(&self) {
+        println!("SSH shutdown triggered");
+        self.shutdown_token.cancel();
+    }
+
+    /// 开启端口转发服务
+    pub async fn ssh_forward(&mut self) -> Result<()> {
+        // 1. 绑定本地端口
+        let local_bind_addr = format!("{}:{}", self.config.local_host, self.config.local_port);
+        let listener = TcpListener::bind(&local_bind_addr)
+            .await
+            .context(format!("Failed to bind SSH server: {local_bind_addr}"))?;
+
+        println!(
+            "Tunnel started: Local {} -> Remote {}:{}",
+            local_bind_addr, self.config.remote_host, self.config.remote_port
+        );
+
+        // 2. 创建事件通道
+        let (event_tx, event_rx) = watch::channel::<SSHEvent>(SSHEvent::default());
+        self.event_rx = Some(event_rx);
+
+        // 3. 启动健康检查任务
+        self.spawn_health_monitor(event_tx.clone());
+
+        // 4. 启动连接监听任务
+        self.spawn_accept_loop(listener, event_tx);
+
+        Ok(())
+    }
+}
+
+// =============================================================================
+// Private Helper Methods (Logic Separation)
+// =============================================================================
+
+impl Ssh {
+    /// DNS 解析
+    async fn resolve_addr(host: &str, port: u16) -> Result<std::net::SocketAddr> {
+        let target = format!("{}:{}", host, port);
+        tokio::net::lookup_host(target.clone())
             .await
             .context("Failed to resolve hostname")?
             .next()
-            .ok_or_else(|| anyhow::anyhow!("Hostname resolved but no IP found"))?;
+            .ok_or_else(|| anyhow::anyhow!("Hostname resolved but no IP found"))
+    }
 
-        // 连接并认证
-        let mut session = client::connect(ssh_config, ssh_addr, handler).await?;
+    /// 处理 SSH 认证
+    async fn authenticate_session(
+        session: &mut Handle<ClientHandler>,
+        config: &ServerTunnelConfig,
+    ) -> Result<()> {
         let auth_res = match &config.auth {
             TunnelAuth::Password(password) => {
                 session
@@ -78,64 +144,34 @@ impl Ssh {
         };
 
         if !auth_res.success() {
-            return Err(anyhow::anyhow!("Failed to authenticate"));
+            Err(anyhow::anyhow!("Failed to authenticate"))
+        } else {
+            Ok(())
         }
-
-        println!("SSH Authentication Complete");
-
-        Ok(Self {
-            session: Arc::new(session),
-            config,
-            event_rx: None,
-            shutdown_token: CancellationToken::new(),
-        })
     }
 
-    pub fn shutdown(&self) {
-        println!("SSH shutdown triggered");
-        self.shutdown_token.cancel();
-    }
+    /// 任务：SSH 连接健康监控 (Ping)
+    fn spawn_health_monitor(&self, monitor_tx: watch::Sender<SSHEvent>) {
+        let session = self.session.clone();
+        let token = self.shutdown_token.clone();
 
-    pub async fn ssh_forward(&mut self) -> Result<()> {
-        // 监听本地端口
-        let local_bind_addr = format!("{}:{}", self.config.local_host, self.config.local_port);
-        let listener = TcpListener::bind(&local_bind_addr)
-            .await
-            .context(format!("Failed to bind SSH server: {local_bind_addr}"))?;
-        println!(
-            "Tunnel started: Local {} -> Remote {}:{}",
-            local_bind_addr, self.config.remote_host, self.config.remote_port
-        );
-
-        let (event_tx, event_rx) = watch::channel::<SSHEvent>(SSHEvent::default());
-
-        let session_monitor = self.session.clone();
-        let session_forward = self.session.clone();
-        // 1. 创建取消令牌
-        let monitor_token = self.shutdown_token.clone();
-        let listener_token = self.shutdown_token.clone();
-        let config = self.config.clone();
-
-        let monitor_tx = event_tx.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_secs(5));
             loop {
                 tokio::select! {
-                    _ = monitor_token.cancelled() => {
+                    _ = token.cancelled() => {
                         debug!("Monitor task shutting down due to cancellation");
                         break;
                     }
                     _ = interval.tick() => {
-                        if session_monitor.is_closed() {
+                        if session.is_closed() {
                             println!("Send SSH Server Health Status: {:?}", SSHStatus::Disconnected);
-                            monitor_tx.send_modify(|s| {
-                                s.ssh_status = SSHStatus::Disconnected;
-                            });
+                            monitor_tx.send_modify(|s| s.ssh_status = SSHStatus::Disconnected);
                             break;
                         }
 
                         let start = Instant::now();
-                        match timeout(Duration::from_secs(5), session_monitor.send_ping()).await {
+                        match timeout(Duration::from_secs(5), session.send_ping()).await {
                             Ok(Ok(_)) => {
                                 monitor_tx.send_modify(|s| s.ssh_status = SSHStatus::Healthy { latency: start.elapsed() });
                             }
@@ -147,43 +183,33 @@ impl Ssh {
                 }
             }
         });
+    }
 
-        // 循环接受连接，支持多并发连接
+    /// 任务：TCP 监听循环 (Accept Loop)
+    fn spawn_accept_loop(&self, listener: TcpListener, event_tx: watch::Sender<SSHEvent>) {
+        let session = self.session.clone();
+        let token = self.shutdown_token.clone();
+        let config = self.config.clone();
+
         tokio::spawn(async move {
             loop {
-                // 使用 select! 监听取消信号，这能解决 TcpListener 不释放的问题
                 tokio::select! {
-                    _ = listener_token.cancelled() => {
+                    _ = token.cancelled() => {
                         println!("Listener task shutting down, releasing port");
                         break;
                     }
                     accept_result = listener.accept() => {
                         match accept_result {
                             Ok((socket, src_addr)) => {
-                                let session = session_forward.clone();
-                                let remote_host = config.remote_host.clone();
-                                let remote_port = config.remote_port;
-                                let tx_traffic = event_tx.clone();
-
-                                let child_token = listener_token.clone();
-
-                                tokio::spawn(async move {
-                                    tokio::select! {
-                                        _ = child_token.cancelled() => {
-                                                println!("Listener task shutting down due to cancellation");
-                                        }
-                                        res = Ssh::handle_forward(session, socket, remote_host, remote_port as u32) => {
-                                            match res {
-                                                Ok((bytes_tx, bytes_rx)) => {
-                                                    tx_traffic.send_modify(|s| {
-                                                        s.traffic.append_traffic(bytes_tx as u128, bytes_rx as u128);
-                                                    });
-                                                }
-                                                Err(e) => eprintln!("Connection {} Error: {:?}", src_addr, e),
-                                            }
-                                        }
-                                    }
-                                });
+                                // 为每个新连接生成一个处理任务
+                                Self::spawn_connection_handler(
+                                    socket,
+                                    src_addr,
+                                    session.clone(),
+                                    config.clone(),
+                                    token.clone(),
+                                    event_tx.clone()
+                                );
                             }
                             Err(e) => {
                                 eprintln!("Accept error: {}", e);
@@ -194,18 +220,105 @@ impl Ssh {
                 }
             }
         });
-
-        self.event_rx = Some(event_rx);
-
-        Ok(())
     }
 
-    async fn handle_forward(
+    /// 任务：处理单个 TCP 连接的生命周期 (包含流量上报)
+    fn spawn_connection_handler(
+        socket: TcpStream,
+        src_addr: std::net::SocketAddr,
+        session: Arc<Handle<ClientHandler>>,
+        config: ServerTunnelConfig,
+        token: CancellationToken,
+        tx_traffic: watch::Sender<SSHEvent>,
+    ) {
+        tokio::spawn(async move {
+            let traffic_tx_counter = Arc::new(AtomicU64::new(0));
+            let traffic_rx_counter = Arc::new(AtomicU64::new(0));
+
+            // 用于底层 IO 的计数器引用
+            let io_tx = traffic_tx_counter.clone();
+            let io_rx = traffic_rx_counter.clone();
+
+            // 用于监控循环的计数器引用
+            let monitor_tx = traffic_tx_counter.clone();
+            let monitor_rx = traffic_rx_counter.clone();
+
+            let mut last_tx: u64 = 0;
+            let mut last_rx: u64 = 0;
+
+            // 核心 IO 逻辑 Future
+            let tunnel_future = Self::perform_tunnel_io(
+                session,
+                socket,
+                config.remote_host,
+                config.remote_port as u32,
+                io_tx,
+                io_rx,
+            );
+            tokio::pin!(tunnel_future);
+
+            let mut interval = tokio::time::interval(Duration::from_secs(1));
+
+            // 流量监控与任务取消的 Select 循环
+            loop {
+                tokio::select! {
+                    _ = token.cancelled() => {
+                        println!("Connection task shutting down due to cancellation");
+                        break; // 退出循环，future 随之 drop，连接关闭
+                    }
+                    // 检查 IO 任务是否完成 (出错或正常关闭)
+                    res = &mut tunnel_future => {
+                        // 任务结束前最后一次上报流量
+                        Self::report_traffic(&tx_traffic, &monitor_tx, &monitor_rx, &mut last_tx, &mut last_rx);
+
+                        if let Err(e) = res {
+                            eprintln!("Connection {} Error: {:?}", src_addr, e)
+                        }
+                        break;
+                    }
+                    // 定时上报流量
+                    _ = interval.tick() => {
+                        Self::report_traffic(&tx_traffic, &monitor_tx, &monitor_rx, &mut last_tx, &mut last_rx);
+                    }
+                }
+            }
+        });
+    }
+
+    /// 辅助：计算并上报流量增量
+    fn report_traffic(
+        tx_event: &watch::Sender<SSHEvent>,
+        counter_tx: &AtomicU64,
+        counter_rx: &AtomicU64,
+        last_tx: &mut u64,
+        last_rx: &mut u64,
+    ) {
+        let current_tx = counter_tx.load(std::sync::atomic::Ordering::Relaxed);
+        let current_rx = counter_rx.load(std::sync::atomic::Ordering::Relaxed);
+
+        let delta_tx = current_tx.saturating_sub(*last_tx);
+        let delta_rx = current_rx.saturating_sub(*last_rx);
+
+        if delta_tx > 0 || delta_rx > 0 {
+            println!("send traffic: tx: {delta_tx}, rx: {delta_rx}");
+            *last_tx = current_tx;
+            *last_rx = current_rx;
+
+            tx_event.send_modify(|s| {
+                s.traffic.append_traffic(delta_tx as u128, delta_rx as u128);
+            });
+        }
+    }
+
+    /// 核心逻辑：建立 SSH 通道并双向转发数据
+    async fn perform_tunnel_io(
         session: Arc<client::Handle<ClientHandler>>,
         mut stream: TcpStream,
         remote_host: String,
         remote_port: u32,
-    ) -> Result<(u64, u64)> {
+        tx_counter: Arc<AtomicU64>,
+        rx_counter: Arc<AtomicU64>,
+    ) -> Result<()> {
         let time_out = 10;
         let channel = timeout(
             Duration::from_secs(time_out),
@@ -216,21 +329,20 @@ impl Ssh {
         .map_err(|e| anyhow!("Failed to open SSH channel, {remote_host}, {remote_port}, {e:#}"))?;
 
         let ssh_stream = channel.into_stream();
-        let (mut ri, mut wi) = stream.split();
-        let (mut ro, mut wo) = tokio::io::split(ssh_stream);
+        let (ri, mut wi) = stream.split();
+        let (ro, mut wo) = tokio::io::split(ssh_stream);
 
-        let client_to_server = tokio::io::copy(&mut ri, &mut wo);
-        let server_to_client = tokio::io::copy(&mut ro, &mut wi);
+        // 包装流量统计
+        let mut ri_counted = TrafficCounter::new(ri, tx_counter);
+        let mut ro_counted = TrafficCounter::new(ro, rx_counter);
+
+        // 双向拷贝
+        let client_to_server = tokio::io::copy(&mut ri_counted, &mut wo);
+        let server_to_client = tokio::io::copy(&mut ro_counted, &mut wi);
 
         match tokio::try_join!(client_to_server, server_to_client) {
-            Ok((bytes_tx, bytes_rx)) => {
-                println!("Traffic: TX {} bytes, RX {} bytes", bytes_tx, bytes_rx);
-                Ok((bytes_tx, bytes_rx))
-            }
-            Err(e) => {
-                println!("Traffic: Failed to write to SSH channel, {e}");
-                Err(e.into())
-            }
+            Ok(_) => Ok(()),
+            Err(e) => Err(e.into()),
         }
     }
 }
