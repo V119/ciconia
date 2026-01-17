@@ -17,14 +17,16 @@ pub struct Model {
     pub ssh_password: Option<String>,
     pub ssh_key_path: Option<String>,
 
+    pub forward_type: String, // "direct" | "container"
+
     // Forwarding
-    pub local_port: u16,
-    pub target_host: String,
-    pub target_port: u16,
+    pub local_port: Option<u16>,
+    pub target_host: Option<String>,
+    pub target_port: Option<u16>,
 
     // Docker Info
-    pub container_id: Option<String>,
     pub container_name: Option<String>,
+    pub container_port: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -2,23 +2,26 @@ use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Context, Result};
-use log::debug;
+use log::{debug, info, warn};
 use russh::client::{self, Handle};
 use russh::keys::{load_secret_key, PrivateKeyWithHashAlg, PublicKey};
+use russh::ChannelMsg;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::watch;
-use tokio::time::{timeout, Duration, Instant};
+use tokio::time::{sleep, timeout, Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
-use crate::server::model::{SSHEvent, SSHStatus, ServerTunnelConfig, TrafficCounter, TunnelAuth};
-
+use crate::server::model::{
+    SSHEvent, SSHStatus, SshConfig, SshConnectConfig, SshForwardConfig, TrafficCounter, TunnelAuth,
+};
+use crate::server::remote_cmd::RemoteCommand;
 // =============================================================================
 // Struct Definitions
 // =============================================================================
 
 pub struct Ssh {
     session: Arc<Handle<ClientHandler>>,
-    config: ServerTunnelConfig,
+    config: SshConfig,
     pub event_rx: Option<watch::Receiver<SSHEvent>>,
     shutdown_token: CancellationToken,
 }
@@ -44,7 +47,7 @@ impl client::Handler for ClientHandler {
 
 impl Ssh {
     /// 初始化 SSH 连接
-    pub async fn init(config: ServerTunnelConfig) -> Result<Ssh> {
+    pub async fn init(config: SshConnectConfig) -> Result<Ssh> {
         let ssh_config = Arc::new(client::Config {
             keepalive_interval: Some(Duration::from_secs(30)),
             ..Default::default()
@@ -63,7 +66,7 @@ impl Ssh {
 
         Ok(Self {
             session: Arc::new(session),
-            config,
+            config: SshConfig::new(config),
             event_rx: None,
             shutdown_token: CancellationToken::new(),
         })
@@ -75,17 +78,96 @@ impl Ssh {
         self.shutdown_token.cancel();
     }
 
+    /// 远程执行命令
+    pub async fn exec_cmd<C: RemoteCommand>(
+        &self,
+        command: &C,
+        timeout: Duration,
+    ) -> Result<Option<C::Output>> {
+        let mut channel = self.session.channel_open_session().await?;
+        let command_str = command.build_shell_string(true);
+        channel.exec(true, command_str).await?;
+
+        let mut stdout = Vec::new();
+        let mut stderr = Vec::new();
+        let mut exit_status = 0;
+        loop {
+            tokio::select! {
+                _ = sleep(timeout) => {
+                    let _ = channel.close().await;
+                    return Err(anyhow!("Command execution timed out after {:?}", timeout));
+                }
+
+                msg = channel.wait() => {
+                    match msg {
+                        Some(ChannelMsg::Data { data }) => {
+                            stdout.extend_from_slice(&data);
+                        }
+                        Some(ChannelMsg::ExtendedData { data, ext }) => {
+                            if ext == 1 {
+                                stderr.extend_from_slice(&data);
+                            }
+                        }
+                        Some(ChannelMsg::ExitStatus { exit_status: code }) => {
+                            exit_status = code;
+                        }
+                        Some(ChannelMsg::Eof) => {
+                            info!("SSH channel eof");
+                        }
+                        None => {
+                            info!("SSH channel closed");
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        let stdout_str = String::from_utf8_lossy(&stdout);
+        let stderr_str = String::from_utf8_lossy(&stderr);
+
+        info!(
+            "Command output - stdout len: {}, stderr len: {}",
+            stdout_str.len(),
+            stderr_str.len()
+        );
+
+        if exit_status != 0 {
+            warn!(
+                "Command failed with status {}. Stderr: {}",
+                exit_status, stderr_str
+            );
+            return Err(anyhow!(
+                "Command failed (exit code {}): {}",
+                exit_status,
+                stderr_str
+            ));
+        }
+
+        // 解析结果
+        let result = command
+            .parse_output(&stdout_str)
+            .context("Failed to parse command output")?;
+
+        Ok(Some(result))
+    }
+
     /// 开启端口转发服务
-    pub async fn ssh_forward(&mut self) -> Result<()> {
+    pub async fn ssh_forward(&mut self, forward_config: &SshForwardConfig) -> Result<()> {
         // 1. 绑定本地端口
-        let local_bind_addr = format!("{}:{}", self.config.local_host, self.config.local_port);
+        self.config.forward_config = Some(forward_config.clone());
+        let local_bind_addr = format!(
+            "{}:{}",
+            forward_config.local_host, forward_config.local_port
+        );
         let listener = TcpListener::bind(&local_bind_addr)
             .await
             .context(format!("Failed to bind SSH server: {local_bind_addr}"))?;
 
         println!(
             "Tunnel started: Local {} -> Remote {}:{}",
-            local_bind_addr, self.config.remote_host, self.config.remote_port
+            local_bind_addr, forward_config.remote_host, forward_config.remote_port
         );
 
         // 2. 创建事件通道
@@ -120,7 +202,7 @@ impl Ssh {
     /// 处理 SSH 认证
     async fn authenticate_session(
         session: &mut Handle<ClientHandler>,
-        config: &ServerTunnelConfig,
+        config: &SshConnectConfig,
     ) -> Result<()> {
         let auth_res = match &config.auth {
             TunnelAuth::Password(password) => {
@@ -189,7 +271,7 @@ impl Ssh {
     fn spawn_accept_loop(&self, listener: TcpListener, event_tx: watch::Sender<SSHEvent>) {
         let session = self.session.clone();
         let token = self.shutdown_token.clone();
-        let config = self.config.clone();
+        let forward_config = self.config.forward_config.clone().unwrap();
 
         tokio::spawn(async move {
             loop {
@@ -206,7 +288,7 @@ impl Ssh {
                                     socket,
                                     src_addr,
                                     session.clone(),
-                                    config.clone(),
+                                    forward_config.clone(),
                                     token.clone(),
                                     event_tx.clone()
                                 );
@@ -227,7 +309,7 @@ impl Ssh {
         socket: TcpStream,
         src_addr: std::net::SocketAddr,
         session: Arc<Handle<ClientHandler>>,
-        config: ServerTunnelConfig,
+        config: SshForwardConfig,
         token: CancellationToken,
         tx_traffic: watch::Sender<SSHEvent>,
     ) {

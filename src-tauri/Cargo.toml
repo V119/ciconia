@@ -54,6 +54,7 @@ anyhow = "1.0.100"
 once_cell = { version = "1.19.0", features = ["std"] }
 async-trait = "0.1.80"
 tokio-util = { version = "0.7.18", features = ["rt"] }
+shell-escape = "0.1.5"
 
 [dev-dependencies]
 cargo-husky = { version = "1", features = [

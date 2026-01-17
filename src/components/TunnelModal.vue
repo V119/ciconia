@@ -35,8 +35,8 @@ const formData = reactive<TunnelConfig>({
   local_port: 8080,
   target_host: '127.0.0.1',
   target_port: 80,
-  container_id: '',
-  container_name: ''
+  container_name: '',
+  container_port: ''
 });
 
 // Initialize form when opening

@@ -19,15 +19,15 @@ export interface TunnelConfig {
   target_port: number;
 
   // Docker
-  container_id?: string;
   container_name?: string;
+  container_port?: String;
 }
 
 export interface DockerContainer {
   id: string;
   image: string;
   name: string;
-  ports: string;
+  ports: string[];
   status: string;
 }
 

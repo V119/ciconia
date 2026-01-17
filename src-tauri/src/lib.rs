@@ -6,7 +6,7 @@ mod service;
 mod settings;
 mod state;
 
-use crate::commands::docker::{fetch_containers, get_container_details};
+use crate::commands::docker::fetch_containers;
 use crate::commands::settings::{get_settings, save_settings};
 use crate::commands::tunnel::{
     delete_tunnel, get_tunnel_status, get_tunnels, save_tunnel, start_tunnel, stop_tunnel,
@@ -226,7 +226,6 @@ pub fn run() {
             stop_tunnel,
             get_tunnel_status,
             fetch_containers,
-            get_container_details,
             get_settings,
             save_settings
         ])

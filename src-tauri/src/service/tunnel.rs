@@ -1,6 +1,6 @@
 use crate::database::models::TunnelConfig;
 use crate::database::DB;
-use crate::server::model::{ServerTunnelConfig, TunnelMetric};
+use crate::server::model::TunnelMetric;
 use crate::server::ServerManager;
 use anyhow::Result;
 use log::{debug, error, info, warn};
@@ -59,8 +59,7 @@ impl TunnelService {
         }
 
         let tunnel = tunnels.unwrap();
-        let tunel_config = ServerTunnelConfig::try_from(&tunnel)?;
-        let result = self.server_manager.start_tunnel(&tunel_config).await;
+        let result = self.server_manager.start_tunnel(&tunnel).await;
         match &result {
             Ok(()) => info!("Tunnel {} started successfully", id),
             Err(e) => error!("Failed to start tunnel {}: {}", id, e),

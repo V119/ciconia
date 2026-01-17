@@ -1,10 +1,13 @@
-use crate::server::model::{ServerTunnelConfig, TunnelCommand, TunnelMetric, TunnelState};
+use crate::database::entity::tunnel_config::Model as TunnelModel;
+use crate::server::model::{
+    SshConnectConfig, SshForwardConfig, TunnelCommand, TunnelMetric, TunnelState,
+};
 use crate::server::ssh::Ssh;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
 pub struct TunnelActor {
-    config: ServerTunnelConfig,
+    config: TunnelModel,
     cmd_rx: mpsc::Receiver<TunnelCommand>,
     metric_tx: watch::Sender<TunnelMetric>,
     ssh: Option<Ssh>,
@@ -13,7 +16,7 @@ pub struct TunnelActor {
 
 impl TunnelActor {
     pub fn new(
-        config: ServerTunnelConfig,
+        config: TunnelModel,
         cmd_rx: mpsc::Receiver<TunnelCommand>,
         metric_tx: watch::Sender<TunnelMetric>,
     ) -> Self {
@@ -71,7 +74,8 @@ impl TunnelActor {
             .send_modify(|s| s.tunnel_state = TunnelState::Starting);
 
         // 1. 初始化 SSH
-        let ssh_res = Ssh::init(self.config.clone()).await;
+        let ssh_connect_config = SshConnectConfig::try_from(&self.config).unwrap();
+        let ssh_res = Ssh::init(ssh_connect_config).await;
         if let Err(e) = ssh_res {
             self.metric_tx
                 .send_modify(|s| s.tunnel_state = TunnelState::Error(e.to_string()));
@@ -79,8 +83,9 @@ impl TunnelActor {
         }
         let mut ssh_instance = ssh_res.unwrap();
 
-        // 2. 启动 SSH 内部任务 (不需要传 token 了)
-        if let Err(e) = ssh_instance.ssh_forward().await {
+        // 2. 启动 SSH 内部任务
+        let forward_config = SshForwardConfig::try_from(&self.config).unwrap();
+        if let Err(e) = ssh_instance.ssh_forward(&forward_config).await {
             self.metric_tx
                 .send_modify(|s| s.tunnel_state = TunnelState::Error(e.to_string()));
             return;

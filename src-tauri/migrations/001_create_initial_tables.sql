@@ -11,11 +11,12 @@ CREATE TABLE IF NOT EXISTS tunnels_v2 (
     auth_type TEXT NOT NULL,
     ssh_password TEXT,
     ssh_key_path TEXT,
-    local_port INTEGER NOT NULL,
-    target_host TEXT NOT NULL,
-    target_port INTEGER NOT NULL,
-    container_id TEXT,
-    container_name TEXT
+    forward_type TEXT NOT NULL,
+    local_port INTEGER,
+    target_host TEXT
+    target_port INTEGER,
+    container_name TEXT,
+    container_port INTEGER
 );
 
 -- Create app_settings table

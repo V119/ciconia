@@ -15,13 +15,13 @@ pub struct TunnelConfig {
     pub ssh_key_path: Option<String>,
 
     // Forwarding
-    pub local_port: u16,
-    pub target_host: String,
-    pub target_port: u16,
+    pub local_port: Option<u16>,
+    pub target_host: Option<String>,
+    pub target_port: Option<u16>,
 
     // Docker Info
-    pub container_id: Option<String>,
     pub container_name: Option<String>,
+    pub container_port: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

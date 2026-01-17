@@ -153,8 +153,8 @@ impl DB {
                 local_port: entity.local_port,
                 target_host: entity.target_host,
                 target_port: entity.target_port,
-                container_id: entity.container_id,
                 container_name: entity.container_name,
+                container_port: entity.container_port,
             })
             .collect();
 
@@ -175,11 +175,12 @@ impl DB {
             auth_type: Set(tunnel.auth_type.clone()),
             ssh_password: Set(tunnel.ssh_password.clone()),
             ssh_key_path: Set(tunnel.ssh_key_path.clone()),
+            forward_type: Default::default(),
             local_port: Set(tunnel.local_port),
             target_host: Set(tunnel.target_host.clone()),
             target_port: Set(tunnel.target_port),
-            container_id: Set(tunnel.container_id.clone()),
             container_name: Set(tunnel.container_name.clone()),
+            container_port: Set(tunnel.container_port.clone()),
         };
 
         // 5. 使用 Upsert 优化隧道保存
@@ -199,8 +200,8 @@ impl DB {
                         tunnel_config::Column::LocalPort,
                         tunnel_config::Column::TargetHost,
                         tunnel_config::Column::TargetPort,
-                        tunnel_config::Column::ContainerId,
                         tunnel_config::Column::ContainerName,
+                        tunnel_config::Column::ContainerPort,
                     ])
                     .to_owned(),
             )

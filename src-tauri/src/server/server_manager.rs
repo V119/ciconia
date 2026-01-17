@@ -1,12 +1,12 @@
 use crate::server::manager::TunnelManager;
 
-use crate::server::model::{ServerTunnelConfig, TunnelMetric};
+use crate::database::entity::tunnel_config::Model as TunnelModel;
+use crate::server::model::TunnelMetric;
 use crate::TrayStatusPayload;
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter};
-use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct ServerManager {
@@ -20,42 +20,30 @@ impl ServerManager {
         }
     }
 
-    pub async fn start_tunnel(&self, tunnel_config: &ServerTunnelConfig) -> Result<()> {
+    pub async fn start_tunnel(&self, tunnel_model: &TunnelModel) -> Result<()> {
         // Convert the database TunnelConfig to the server model TunnelConfig
-        let tunnel_id = tunnel_config.id;
+        let tunnel_id = tunnel_model.id.clone();
 
-        self.tunnel_manager.add_tunnel(tunnel_config).await;
-        self.tunnel_manager.start_tunnel(tunnel_id).await?;
+        self.tunnel_manager.add_tunnel(tunnel_model).await;
+        self.tunnel_manager.start_tunnel(&tunnel_id).await?;
 
         Ok(())
     }
 
-    pub async fn stop_tunnel(&self, id: &str) -> Result<()> {
-        if let Ok(uuid) = Uuid::parse_str(id) {
-            self.tunnel_manager.stop_tunnel(uuid).await?;
-            Ok(())
-        } else {
-            Err(anyhow!(format!("Invalid tunnel ID: {}", id)))
-        }
+    pub async fn stop_tunnel(&self, id: &String) -> Result<()> {
+        self.tunnel_manager.stop_tunnel(id).await?;
+        Ok(())
     }
 
-    pub async fn get_tunnel_metric(&self, id: &str) -> TunnelMetric {
-        if let Ok(uuid) = Uuid::parse_str(id) {
-            let state = self.tunnel_manager.get_tunnel_metric(uuid).await;
+    pub async fn get_tunnel_metric(&self, id: &String) -> TunnelMetric {
+        let state = self.tunnel_manager.get_tunnel_metric(id).await;
 
-            state.unwrap_or(TunnelMetric::default())
-        } else {
-            TunnelMetric::default()
-        }
+        state.unwrap_or(TunnelMetric::default())
     }
 
-    pub async fn remove_tunnel(&self, id: &str) -> Result<()> {
-        if let Ok(uuid) = Uuid::parse_str(id) {
-            let manager = self.tunnel_manager.clone();
-            manager.remove_tunnel(uuid).await
-        } else {
-            Err(anyhow!(format!("Invalid tunnel ID: {}", id)))
-        }
+    pub async fn remove_tunnel(&self, id: &String) -> Result<()> {
+        let manager = self.tunnel_manager.clone();
+        manager.remove_tunnel(id).await
     }
 
     pub async fn monitor_tunnels_status(&self, app_handle: &AppHandle) -> Result<()> {

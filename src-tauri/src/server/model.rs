@@ -1,12 +1,11 @@
 use crate::database::entity::tunnel_config::Model as TunnelModel;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use std::pin::Pin;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
 use std::task::Poll;
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
-use uuid::Uuid;
 
 #[derive(Clone, Debug)]
 pub enum TunnelAuth {
@@ -14,41 +13,20 @@ pub enum TunnelAuth {
     Key(String),
 }
 
-#[derive(Clone, Debug)]
-pub struct ServerTunnelConfig {
-    pub id: Uuid,
-    #[allow(dead_code)]
-    pub name: String,
-
-    pub local_host: String,
-    pub local_port: u16,
-    pub remote_host: String,
-    pub remote_port: u16,
-
-    pub ssh_host: String,
-    pub ssh_port: u16,
-
-    pub ssh_user: String,
-    pub auth: TunnelAuth,
-}
-
-impl TryFrom<&TunnelModel> for ServerTunnelConfig {
+impl TryFrom<&TunnelModel> for TunnelAuth {
     type Error = anyhow::Error;
 
-    fn try_from(db_config: &TunnelModel) -> Result<Self> {
-        let id = Uuid::parse_str(&db_config.id)
-            .with_context(|| format!("Invalid UUID format: {}", db_config.id))?;
-
-        let auth = match db_config.auth_type.as_str() {
+    fn try_from(value: &TunnelModel) -> Result<Self> {
+        let auth = match value.auth_type.as_str() {
             "password" => {
-                let password = db_config
+                let password = value
                     .ssh_password
                     .as_ref()
                     .ok_or_else(|| anyhow!("Password not provided for password authentication"))?;
                 TunnelAuth::Password(password.clone())
             }
             "key" => {
-                let key_path = db_config
+                let key_path = value
                     .ssh_key_path
                     .as_ref()
                     .ok_or_else(|| anyhow!("Key path not provided for key authentication"))?;
@@ -57,17 +35,113 @@ impl TryFrom<&TunnelModel> for ServerTunnelConfig {
             other => return Err(anyhow!("Invalid auth type: {}", other)),
         };
 
-        Ok(ServerTunnelConfig {
-            id,
-            name: db_config.name.clone(),
-            local_host: "127.0.0.1".to_string(),
-            local_port: db_config.local_port,
-            remote_host: db_config.target_host.clone(),
-            remote_port: db_config.target_port,
+        Ok(auth)
+    }
+}
+
+// #[derive(Clone, Debug)]
+// pub struct ServerTunnelConfig {
+//     pub id: Uuid,
+//     #[allow(dead_code)]
+//     pub name: String,
+//
+//     pub local_host: String,
+//     pub local_port: u16,
+//     pub remote_host: String,
+//     pub remote_port: u16,
+//
+//     pub ssh_host: String,
+//     pub ssh_port: u16,
+//
+//     pub ssh_user: String,
+//     pub auth: TunnelAuth,
+// }
+//
+// impl TryFrom<&TunnelModel> for ServerTunnelConfig {
+//     type Error = anyhow::Error;
+//
+//     fn try_from(db_config: &TunnelModel) -> Result<Self> {
+//         let id = Uuid::parse_str(&db_config.id)
+//             .with_context(|| format!("Invalid UUID format: {}", db_config.id))?;
+//
+//         let auth = TunnelAuth::try_from(db_config)?;
+//
+//         Ok(ServerTunnelConfig {
+//             id,
+//             name: db_config.name.clone(),
+//             local_host: "127.0.0.1".to_string(),
+//             local_port: db_config.local_port,
+//             remote_host: db_config.target_host.clone(),
+//             remote_port: db_config.target_port,
+//             ssh_host: db_config.ssh_host.clone(),
+//             ssh_port: db_config.ssh_port,
+//             ssh_user: db_config.ssh_username.clone(),
+//             auth,
+//         })
+//     }
+// }
+#[derive(Clone, Debug)]
+pub struct SshConfig {
+    #[allow(dead_code)]
+    pub connect_config: SshConnectConfig,
+    pub forward_config: Option<SshForwardConfig>,
+}
+
+impl SshConfig {
+    pub fn new(connect_config: SshConnectConfig) -> Self {
+        Self {
+            connect_config,
+            forward_config: None,
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SshConnectConfig {
+    pub ssh_host: String,
+    pub ssh_port: u16,
+
+    pub ssh_user: String,
+    pub auth: TunnelAuth,
+}
+
+impl TryFrom<&TunnelModel> for SshConnectConfig {
+    type Error = anyhow::Error;
+
+    fn try_from(db_config: &TunnelModel) -> Result<Self> {
+        let auth = TunnelAuth::try_from(db_config)?;
+
+        Ok(Self {
             ssh_host: db_config.ssh_host.clone(),
             ssh_port: db_config.ssh_port,
+
             ssh_user: db_config.ssh_username.clone(),
             auth,
+        })
+    }
+}
+
+#[derive(Clone, Debug)]
+pub struct SshForwardConfig {
+    pub local_host: String,
+    pub local_port: u16,
+    pub remote_host: String,
+    pub remote_port: u16,
+}
+
+impl TryFrom<&TunnelModel> for SshForwardConfig {
+    type Error = anyhow::Error;
+
+    fn try_from(db_config: &TunnelModel) -> Result<SshForwardConfig> {
+        if db_config.forward_type == "container" {
+            return Err(anyhow!("type error"));
+        }
+
+        Ok(SshForwardConfig {
+            local_host: "127.0.0.1".to_string(),
+            local_port: db_config.local_port.unwrap(),
+            remote_host: db_config.target_host.clone().unwrap(),
+            remote_port: db_config.target_port.unwrap(),
         })
     }
 }
