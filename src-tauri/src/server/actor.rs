@@ -2,7 +2,10 @@ use crate::database::entity::tunnel_config::Model as TunnelModel;
 use crate::server::model::{
     SshConnectConfig, SshForwardConfig, TunnelCommand, TunnelMetric, TunnelState,
 };
+use crate::server::remote_cmd::GetContainerAddrCmd;
 use crate::server::ssh::Ssh;
+use anyhow::anyhow;
+use std::time::Duration;
 use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 
@@ -74,7 +77,15 @@ impl TunnelActor {
             .send_modify(|s| s.tunnel_state = TunnelState::Starting);
 
         // 1. 初始化 SSH
-        let ssh_connect_config = SshConnectConfig::try_from(&self.config).unwrap();
+        let ssh_connect_config = match SshConnectConfig::try_from(&self.config) {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                self.metric_tx
+                    .send_modify(|s| s.tunnel_state = TunnelState::Error(e.to_string()));
+                return;
+            }
+        };
+
         let ssh_res = Ssh::init(ssh_connect_config).await;
         if let Err(e) = ssh_res {
             self.metric_tx
@@ -83,15 +94,73 @@ impl TunnelActor {
         }
         let mut ssh_instance = ssh_res.unwrap();
 
-        // 2. 启动 SSH 内部任务
-        let forward_config = SshForwardConfig::try_from(&self.config).unwrap();
+        println!("config.mode: {:?}", self.config.mode);
+
+        // 2. Prepare Forward Config
+        let forward_config = if self.config.mode == "docker" {
+            // Resolve Container IP
+            let container_name = match self
+                .config
+                .container_name
+                .clone()
+                .ok_or(anyhow!("Container name missing"))
+            {
+                Ok(name) => name,
+                Err(e) => {
+                    self.metric_tx
+                        .send_modify(|s| s.tunnel_state = TunnelState::Error(e.to_string()));
+                    return;
+                }
+            };
+
+            let cmd = GetContainerAddrCmd { container_name };
+            let ip_res = ssh_instance.exec_cmd(&cmd, Duration::from_secs(10)).await;
+
+            let ip = match ip_res {
+                Ok(Some(ip)) => ip,
+                Ok(None) => {
+                    self.metric_tx.send_modify(|s| {
+                        s.tunnel_state = TunnelState::Error("Container IP not found".into())
+                    });
+                    return;
+                }
+                Err(e) => {
+                    self.metric_tx
+                        .send_modify(|s| s.tunnel_state = TunnelState::Error(e.to_string()));
+                    return;
+                }
+            };
+
+            let remote_port = self.config.container_port.unwrap_or(80);
+
+            SshForwardConfig {
+                local_host: "127.0.0.1".to_string(),
+                local_port: self.config.local_port.unwrap_or(0),
+                remote_host: ip,
+                remote_port,
+            }
+        } else {
+            // Standard mode
+            match SshForwardConfig::try_from(&self.config) {
+                Ok(cfg) => cfg,
+                Err(e) => {
+                    self.metric_tx
+                        .send_modify(|s| s.tunnel_state = TunnelState::Error(e.to_string()));
+                    return;
+                }
+            }
+        };
+
+        println!("forward_config: {:?}", forward_config);
+
+        // 3. 启动 SSH 内部任务
         if let Err(e) = ssh_instance.ssh_forward(&forward_config).await {
             self.metric_tx
                 .send_modify(|s| s.tunnel_state = TunnelState::Error(e.to_string()));
             return;
         }
 
-        // 3. 提取 RX 通道 (Clone)
+        // 4. 提取 RX 通道 (Clone)
         // 必须 clone 出来，因为我们要把 ssh_instance 存在 self.ssh 里，
         // 同时要把 rx move 到下面的 spawn 任务里。
         let mut event_rx = ssh_instance
@@ -100,12 +169,12 @@ impl TunnelActor {
             .expect("Event RX must be initialized")
             .clone();
 
-        // 4. 保存 SSH 实例
+        // 5. 保存 SSH 实例
         self.ssh = Some(ssh_instance);
 
         let metric_tx = self.metric_tx.clone();
 
-        // 5. 启动 Metrics 更新任务
+        // 6. 启动 Metrics 更新任务
         let task = tokio::spawn(async move {
             loop {
                 if event_rx.changed().await.is_err() {

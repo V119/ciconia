@@ -4,7 +4,7 @@ pub mod models;
 use anyhow::{Context, Result};
 use entity::prelude::*;
 use entity::{app_settings, tunnel_config};
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use models::{AppSettings as AppSettingsModel, TunnelConfig as TunnelConfigModel};
 use once_cell::sync::OnceCell;
 use sea_orm::{
@@ -132,10 +132,12 @@ impl DB {
         debug!("Loading tunnels");
 
         let connection = DB_POOL.get().context("Failed to get DB pool")?;
-        let entities = TunnelConfig::find()
-            .all(connection)
-            .await
-            .context("Failed to load tunnels")?;
+        let entities = TunnelConfig::find().all(connection).await.map_err(|e| {
+            error!("Database query failed for tunnels: {:?}", e);
+            e
+        })?;
+
+        debug!("Found {} tunnels", entities.len());
 
         // 建议：在 models.rs 中实现 impl From<tunnel_config::Model> for TunnelConfigModel
         let configs = entities
@@ -175,12 +177,16 @@ impl DB {
             auth_type: Set(tunnel.auth_type.clone()),
             ssh_password: Set(tunnel.ssh_password.clone()),
             ssh_key_path: Set(tunnel.ssh_key_path.clone()),
-            forward_type: Default::default(),
+            forward_type: Set(if tunnel.mode == "docker" {
+                "container".to_string()
+            } else {
+                "direct".to_string()
+            }),
             local_port: Set(tunnel.local_port),
             target_host: Set(tunnel.target_host.clone()),
             target_port: Set(tunnel.target_port),
             container_name: Set(tunnel.container_name.clone()),
-            container_port: Set(tunnel.container_port.clone()),
+            container_port: Set(tunnel.container_port),
         };
 
         // 5. 使用 Upsert 优化隧道保存
@@ -207,7 +213,10 @@ impl DB {
             )
             .exec(connection)
             .await
-            .context(format!("Failed to save tunnel {}", tunnel.id))?;
+            .map_err(|e| {
+                error!("Failed to save tunnel {} due to: {:?}", tunnel.id, e);
+                e
+            })?;
 
         Ok(())
     }

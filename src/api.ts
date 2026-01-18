@@ -11,16 +11,16 @@ export interface TunnelConfig {
   ssh_username: string;
   auth_type: "password" | "key";
   ssh_password?: string;
-  ssh_key_path?: string;
+  ssh_key_path: string | null;
 
   // Forwarding
-  local_port: number;
-  target_host: string;
-  target_port: number;
+  local_port: number | null;
+  target_host: string | null;
+  target_port: number | null;
 
   // Docker
-  container_name?: string;
-  container_port?: String;
+  container_name: string | null;
+  container_port: number | null;
 }
 
 export interface DockerContainer {
@@ -42,6 +42,7 @@ export interface SshParams {
   auth_type: "password" | "key";
   private_key_path?: string;
   password?: string;
+  keyword?: string;
 }
 
 export async function getTunnels(): Promise<TunnelConfig[]> {
@@ -98,8 +99,4 @@ export async function saveSettings(settings: AppSettings): Promise<void> {
 
 export async function fetchContainers(params: SshParams): Promise<DockerContainer[]> {
   return invoke("fetch_containers", { params });
-}
-
-export async function getContainerDetails(params: SshParams, containerId: string): Promise<ContainerDetails> {
-  return invoke("get_container_details", { params, containerId });
 }

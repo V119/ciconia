@@ -28,6 +28,7 @@ pub struct FetchContainerParams {
     pub auth_type: String, // "key" | "password"
     pub private_key_path: Option<String>,
     pub password: Option<String>,
+    pub keyword: Option<String>,
 }
 
 impl TryFrom<&FetchContainerParams> for TunnelAuth {
@@ -74,7 +75,7 @@ impl TryFrom<&FetchContainerParams> for SshConnectConfig {
 #[command]
 pub async fn fetch_containers(params: FetchContainerParams) -> CommandResult<Vec<DockerContainer>> {
     let ssh_connect_config = SshConnectConfig::try_from(&params).map_err(CommandError::from)?;
-    let containers = get_container_infos(&ssh_connect_config, None).await?;
+    let containers = get_container_infos(&ssh_connect_config, params.keyword).await?;
 
     Ok(containers.iter().map(DockerContainer::from).collect())
 }

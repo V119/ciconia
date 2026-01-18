@@ -54,9 +54,9 @@ impl RemoteCommand for GetContainerInfoCmd {
     fn to_shell_string(&self) -> String {
         if let Some(keyword) = &self.keyword {
             let keyword = Cow::from(keyword);
-            format!("docker ps --format '{{.ID}}|{{.Image}}|{{.Names}}|{{.Ports}}|{{.Status}}' | grep {}", escape(keyword))
+            format!("docker ps --format '{{{{.ID}}}}|{{{{.Image}}}}|{{{{.Names}}}}|{{{{.Ports}}}}|{{{{.Status}}}}' | grep {}", escape(keyword))
         } else {
-            "docker ps --format '{{.ID}}|{{.Image}}|{{.Names}}|{{.Ports}}|{{.Status}}".to_string()
+            "docker ps --format '{{.ID}}|{{.Image}}|{{.Names}}|{{.Ports}}|{{.Status}}'".to_string()
         }
     }
 
@@ -106,7 +106,7 @@ impl RemoteCommand for GetContainerAddrCmd {
     fn to_shell_string(&self) -> String {
         let container_name = Cow::from(&self.container_name);
         format!(
-            "docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' {}",
+            "docker inspect -f '{{{{range .NetworkSettings.Networks}}}}{{{{.IPAddress}}}}{{{{end}}}}' {}",
             escape(container_name)
         )
     }

@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS tunnels_v2 (
     ssh_key_path TEXT,
     forward_type TEXT NOT NULL,
     local_port INTEGER,
-    target_host TEXT
+    target_host TEXT,
     target_port INTEGER,
     container_name TEXT,
     container_port INTEGER

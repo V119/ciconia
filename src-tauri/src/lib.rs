@@ -14,6 +14,7 @@ use crate::commands::tunnel::{
 use crate::server::model::{TunnelMetric, TunnelState};
 use crate::service::tunnel::TunnelService;
 use crate::state::AppState;
+use log::debug;
 use std::collections::HashMap;
 use tauri::{
     image::Image,
@@ -60,6 +61,22 @@ pub fn run() {
             Some(vec![]),
         ))
         .setup(|app| {
+            let log_plugin = tauri_plugin_log::Builder::default();
+            let log_plugin = if cfg!(dev) {
+                log_plugin.level(log::LevelFilter::Debug)
+            } else {
+                log_plugin.level(log::LevelFilter::Info)
+            };
+            let log_plugin = log_plugin
+                .target(Target::new(TargetKind::Stdout))
+                .target(Target::new(TargetKind::Webview))
+                .target(Target::new(TargetKind::LogDir {
+                    file_name: Some("ciconia".to_string()),
+                }))
+                .build();
+
+            app.handle().plugin(log_plugin)?;
+
             // Initialize App State
             #[cfg(debug_assertions)] // only include this code on debug builds
             {
@@ -71,6 +88,7 @@ pub fn run() {
                 .path()
                 .app_data_dir()
                 .expect("failed to get app data dir");
+            debug!("app_data_dir: {:?}", app_data_dir);
 
             tauri::async_runtime::block_on(async {
                 database::DB::init(app_data_dir.clone()).await.unwrap();
@@ -196,16 +214,6 @@ pub fn run() {
                 .build(app)?;
 
             // Setup Log - Enable for both debug and release builds with comprehensive targets
-            app.handle().plugin(
-                tauri_plugin_log::Builder::default()
-                    .level(log::LevelFilter::Info)
-                    .target(Target::new(TargetKind::Stdout))
-                    .target(Target::new(TargetKind::Webview))
-                    .target(Target::new(TargetKind::LogDir {
-                        file_name: Some("ciconia".to_string()),
-                    }))
-                    .build(),
-            )?;
             Ok(())
         })
         .on_window_event(|window, event| {

@@ -21,7 +21,7 @@ pub struct TunnelConfig {
 
     // Docker Info
     pub container_name: Option<String>,
-    pub container_port: Option<String>,
+    pub container_port: Option<u16>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]

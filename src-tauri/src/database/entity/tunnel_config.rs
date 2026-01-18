@@ -26,7 +26,7 @@ pub struct Model {
 
     // Docker Info
     pub container_name: Option<String>,
-    pub container_port: Option<String>,
+    pub container_port: Option<u16>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

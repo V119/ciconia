@@ -86,6 +86,7 @@ impl Ssh {
     ) -> Result<Option<C::Output>> {
         let mut channel = self.session.channel_open_session().await?;
         let command_str = command.build_shell_string(true);
+        info!("Executing command: {}", command_str);
         channel.exec(true, command_str).await?;
 
         let mut stdout = Vec::new();
