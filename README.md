@@ -1,8 +1,9 @@
 # Ciconia (Powered by Tauri v2 & Russh)
 
 ![Tauri v2](https://img.shields.io/badge/Tauri-v2-blue.svg)
-![Rust](https://img.shields.io/badge/Rust-1.75%2B-orange.svg)
+![Rust](https://img.shields.io/badge/Rust-1.92%2B-orange.svg)
 ![Crate: russh](https://img.shields.io/badge/Crate-russh-red.svg)
+![Crate: russh](https://img.shields.io/badge/Crate-tokio-red.svg)
 ![Vue 3](https://img.shields.io/badge/Vue-3-green.svg)
 
 > **[🇨🇳 简体中文 (Chinese Version)](README_zh-CN.md)**
