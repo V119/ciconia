@@ -40,7 +40,7 @@ export interface SshParams {
   port: number;
   username: string;
   auth_type: "password" | "key";
-  private_key_path?: string;
+  private_key_path: string | null;
   password?: string;
   keyword?: string;
 }
