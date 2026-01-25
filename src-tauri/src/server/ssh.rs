@@ -249,7 +249,8 @@ impl Ssh {
                     _ = interval.tick() => {
                         if session.is_closed() {
                             println!("Send SSH Server Health Status: {:?}", SSHStatus::Disconnected);
-                            monitor_tx.send_modify(|s| s.ssh_status = SSHStatus::Disconnected);
+                            let _ = monitor_tx.send_modify(|s| s.ssh_status = SSHStatus::Disconnected);
+                            token.cancel();
                             break;
                         }
 
@@ -260,6 +261,11 @@ impl Ssh {
                             }
                             _ => {
                                 monitor_tx.send_modify(|s| s.ssh_status = SSHStatus::Unstable { reason: "Timeout/Err".into() });
+                                if session.is_closed() {
+                                    let _ = monitor_tx.send_modify(|s| s.ssh_status = SSHStatus::Disconnected);
+                                    token.cancel();
+                                    break;
+                                }
                             }
                         }
                     }
