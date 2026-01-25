@@ -3,7 +3,7 @@
 ![Tauri v2](https://img.shields.io/badge/Tauri-v2-blue.svg)
 ![Rust](https://img.shields.io/badge/Rust-1.92%2B-orange.svg)
 ![Crate: russh](https://img.shields.io/badge/Crate-russh-red.svg)
-![Crate: russh](https://img.shields.io/badge/Crate-tokio-red.svg)
+![Crate: tokio](https://img.shields.io/badge/Crate-tokio-red.svg)
 ![Vue 3](https://img.shields.io/badge/Vue-3-green.svg)
 
 > **[🇨🇳 简体中文 (Chinese Version)](README_zh-CN.md)**
@@ -28,6 +28,12 @@ Designed specifically for containerized environments to solve the issue of tunne
     *   **Advantage**: Even if the container restarts and the IP changes, the tunnel configuration remains valid and always points to the correct service.
 *   **No Mapping Required**: The target container **does not** need to map ports (via `-p`) on the host. The tunnel goes directly into the container's internal network.
 
+### 3. 🛠️ Robust Management
+*   **Tray Support**: Runs in the background with a system tray icon for quick access and status monitoring.
+*   **Auto-start**: Option to launch automatically when the system starts.
+*   **Traffic Monitoring**: Real-time tracking of sent/received bytes and connection latency (ping).
+*   **Persistence**: All configurations are stored locally in an SQLite database using SeaORM.
+
 ## 🛠️ Tech Architecture
 
 This project utilizes high-performance asynchronous networking components from the Rust ecosystem:
@@ -39,6 +45,7 @@ This project utilizes high-performance asynchronous networking components from t
     *   **Pure Rust**: Uses `russh` to handle SSH handshakes, key authentication, and channel management.
     *   **High Performance**: Uses `russh`'s `DirectTcpIp` channel for efficient traffic forwarding.
     *   **Remote Execution**: Uses `russh`'s `Session` to execute remote Docker commands.
+*   **Storage**: **SQLite** with **SeaORM** for reliable and structured data management.
 
 ## 🚀 How It Works (Docker Mode)
 
@@ -68,33 +75,32 @@ npm install
 
 # 2. Start Tauri dev mode (Starts both frontend and Rust backend)
 npm run tauri dev
+```
 
-# 3. Build for Production
+### Build for Production
+
+```bash
+# Build for the current platform
 npm run tauri build
 ```
 
-### 📋 Server Requirements
+## 📋 Server Requirements
 
 To use this software, the remote server must meet the following:
 
-SSH Service: SSHD enabled with AllowTcpForwarding yes (usually enabled by default).
+*   **SSH Service**: SSHD enabled with `AllowTcpForwarding yes` (usually enabled by default).
+*   **Docker**: Docker installed, and the SSH user must have permission to execute docker commands (e.g., added to the `docker` group).
 
-Docker: Docker installed, and the SSH user must have permission to execute docker commands (e.g., added to the docker group).
-
-### 🤝 Contributing
+## 🤝 Contributing
 
 Contributions are welcome! If you want to improve the russh integration or optimize the frontend experience:
 
-Fork the repository.
+1.  **Fork** the repository.
+2.  **Create** a feature branch (`git checkout -b feature/NewFeature`).
+3.  **Commit** your changes (`git commit -m 'Add NewFeature'`).
+4.  **Push** to the branch (`git push origin feature/NewFeature`).
+5.  **Open** a Pull Request.
 
-Create a feature branch (git checkout -b feature/NewFeature).
-
-Commit your changes (git commit -m 'Add NewFeature').
-
-Push to the branch (git push origin feature/NewFeature).
-
-Open a Pull Request.
-
-###📄 License
+## 📄 License
 
 MIT License

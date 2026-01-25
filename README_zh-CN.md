@@ -1,9 +1,9 @@
-# Ciconia (Powered by Tauri v2 & russh)
+# Ciconia (Powered by Tauri v2 & Russh)
 
 ![Tauri v2](https://img.shields.io/badge/Tauri-v2-blue.svg)
 ![Rust](https://img.shields.io/badge/Rust-1.92%2B-orange.svg)
 ![Crate: russh](https://img.shields.io/badge/Crate-russh-red.svg)
-![Crate: russh](https://img.shields.io/badge/Crate-tokio-red.svg)
+![Crate: tokio](https://img.shields.io/badge/Crate-tokio-red.svg)
 ![Vue 3](https://img.shields.io/badge/Vue-3-green.svg)
 
 > **[🇬🇧 English Version](README.md)**
@@ -28,6 +28,12 @@
     *   **优势**：即使容器重启导致 IP 变化，隧道配置也无需修改，始终指向正确的服务。
 *   **无需映射**：目标容器**不需要**在宿主机上使用 `-p` 映射端口，隧道直接通往容器内部网络。
 
+### 3. 🛠️ 完善的管理体验
+*   **托盘支持**：支持最小化到系统托盘，快速查看隧道状态及进行常用操作。
+*   **开机自启动**：支持设置随系统启动自动运行。
+*   **流量监控**：实时监控每个隧道的上传/下载流量以及连接延迟（Ping）。
+*   **持久化存储**：使用 SeaORM + SQLite 本地数据库，确保配置安全、可靠。
+
 ## 🛠️ 技术架构
 
 本项目采用了 Rust 生态中高性能的异步网络组件：
@@ -39,6 +45,7 @@
     *   **纯 Rust 实现**：使用 `russh` 处理 SSH 握手、密钥认证、Channel 管理。
     *   **高性能转发**：使用 `russh` 的 `DirectTcpIp` 通道实现高效的流量转发。
     *   **远程执行**：使用 `russh` 的 `Session` 执行远程 Docker 命令。
+*   **存储层**: 使用 **SQLite** 结合 **SeaORM** 异步 ORM 框架，进行配置和状态的持久化。
 
 ## 🚀 运行原理 (Docker 模式)
 
@@ -68,30 +75,31 @@ npm install
 
 # 2. 启动 Tauri 开发模式 (同时启动前端和 Rust 后端)
 npm run tauri dev
+```
 
-构建生产版本
+### 构建生产版本
+
+```bash
+# 构建当前平台的发布版本
 npm run tauri build
 ```
 
+## 📋 服务器要求
+
 为了使用本软件，远程服务器需要满足：
 
-SSH 服务：开启 SSHD，并允许 TCP 转发 (AllowTcpForwarding yes，通常默认开启)。
-
-Docker：已安装 Docker，且登录的 SSH 用户有权限执行 docker 命令 (建议将用户加入 docker 用户组，避免使用 root)。
+*   **SSH 服务**：开启 SSHD，并允许 TCP 转发 (`AllowTcpForwarding yes`，通常默认开启)。
+*   **Docker**：已安装 Docker，且登录的 SSH 用户有权限执行 docker 命令 (建议将用户加入 `docker` 用户组)。
 
 ### 🤝 贡献指南 (Contributing)
 
 我们非常欢迎社区贡献！如果您想改进 russh 的集成方式或优化前端体验：
 
-Fork 本仓库。
-
-创建特性分支 (git checkout -b feature/NewFeature)。
-
-提交代码 (git commit -m 'Add NewFeature')。
-
-推送到分支 (git push origin feature/NewFeature)。
-
-提交 Pull Request。
+1.  **Fork** 本仓库。
+2.  **创建** 特性分支 (`git checkout -b feature/NewFeature`)。
+3.  **提交** 代码 (`git commit -m 'Add NewFeature'`)。
+4.  **推送** 到分支 (`git push origin feature/NewFeature`)。
+5.  **提交** Pull Request。
 
 ### 📄 许可证
 
