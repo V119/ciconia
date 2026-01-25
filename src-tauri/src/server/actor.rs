@@ -1,6 +1,6 @@
 use crate::database::entity::tunnel_config::Model as TunnelModel;
 use crate::server::model::{
-    SshConnectConfig, SshForwardConfig, TunnelCommand, TunnelMetric, TunnelState,
+    SshConnectConfig, SshForwardConfig, SSHStatus, TunnelCommand, TunnelMetric, TunnelState,
 };
 use crate::server::remote_cmd::GetContainerAddrCmd;
 use crate::server::ssh::Ssh;
@@ -73,6 +73,11 @@ impl TunnelActor {
     }
 
     async fn handle_start(&mut self) {
+        if self.ssh.is_some() || self.running_task.is_some() {
+            println!("Tunnel already running, stopping first");
+            self.handle_stop().await;
+        }
+
         self.metric_tx
             .send_modify(|s| s.tunnel_state = TunnelState::Starting);
 
@@ -184,12 +189,19 @@ impl TunnelActor {
                     break;
                 } else {
                     let event = event_rx.borrow_and_update().clone();
+                    let mut is_disconnected = false;
                     metric_tx.send_modify(|s| {
                         println!("actor send event: {:?}", event);
                         s.traffic
                             .set(event.traffic.send_bytes, event.traffic.recv_bytes);
                         s.tunnel_state = TunnelState::from(&event.ssh_status);
+                        if let SSHStatus::Disconnected = event.ssh_status {
+                            is_disconnected = true;
+                        }
                     });
+                    if is_disconnected {
+                        break;
+                    }
                 }
             }
         });
