@@ -1,6 +1,6 @@
 use crate::database::entity::tunnel_config::Model as TunnelModel;
 use crate::server::model::{
-    SshConnectConfig, SshForwardConfig, SSHStatus, TunnelCommand, TunnelMetric, TunnelState,
+    SshConnectConfig, SshForwardConfig, TunnelCommand, TunnelMetric, TunnelState,
 };
 use crate::server::remote_cmd::GetContainerAddrCmd;
 use crate::server::ssh::Ssh;
@@ -194,8 +194,10 @@ impl TunnelActor {
                         println!("actor send event: {:?}", event);
                         s.traffic
                             .set(event.traffic.send_bytes, event.traffic.recv_bytes);
-                        s.tunnel_state = TunnelState::from(&event.ssh_status);
-                        if let SSHStatus::Disconnected = event.ssh_status {
+                        let status = TunnelState::from(&event.ssh_status);
+                        s.tunnel_state = status.clone();
+                        if let TunnelState::Error(e) = status {
+                            println!("actor send error: {:?}", e.clone());
                             is_disconnected = true;
                         }
                     });
