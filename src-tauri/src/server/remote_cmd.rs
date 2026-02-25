@@ -24,6 +24,7 @@ pub trait RemoteCommand {
     fn parse_output(&self, output: &str) -> Option<Self::Output>;
 }
 
+#[derive(Debug)]
 pub struct ContainerInfo {
     pub id: String,
     pub image: String,
@@ -91,6 +92,7 @@ impl RemoteCommand for GetContainerInfoCmd {
             });
         }
 
+        println!("container_info:{:#?}", containers);
         Some(containers)
     }
 }

@@ -35,16 +35,20 @@ impl TunnelService {
 
     pub async fn delete_tunnel(&self, id: String) -> Result<()> {
         debug!("Deleting tunnel {}", id);
+
+        // First try to remove the tunnel from manager if it exists
+        // This will stop it if running and clean up the actor
+        if let Err(e) = self.server_manager.remove_tunnel(&id).await {
+            warn!("Tunnel {} was not running or failed to remove: {}", id, e);
+        } else {
+            debug!("Tunnel {} removed from manager", id);
+        }
+
+        // Delete from database regardless of removal result
         DB::delete_tunnel(&id).await?;
         info!("Tunnel {} deleted from database", id);
 
-        let stop_result = self.server_manager.stop_tunnel(&id).await;
-        match &stop_result {
-            Ok(()) => debug!("Tunnel {} stopped successfully", id),
-            Err(e) => warn!("Failed to stop tunnel {} before deletion: {}", id, e),
-        };
-
-        stop_result
+        Ok(())
     }
 
     pub async fn start_tunnel(&self, id: String) -> Result<()> {

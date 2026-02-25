@@ -78,18 +78,18 @@ const formatBytes = (bytes: number) => {
     </div>
 
     <!-- Right: Status & Actions -->
-    <div class="flex items-center gap-4">
+    <div class="flex items-center gap-4 relative">
       <!-- Ping/Latency -->
       <div v-if="status.is_running && status.ping !== null" class="flex items-center gap-1.5 text-xs font-medium text-emerald-400">
         <Activity :size="14" />
         <span>{{ status.ping }}ms</span>
       </div>
-      
+
       <!-- Status indicator based on state -->
       <span class="text-xs font-medium" :class="getStatusClass(status.state || 'unknown')">
         {{ getStatusText(status.state || 'unknown') }}
       </span>
-      
+
       <!-- Traffic indicators when running -->
       <div v-if="status.is_running" class="flex flex-col text-xs text-slate-400">
         <div class="flex gap-2">
@@ -97,30 +97,30 @@ const formatBytes = (bytes: number) => {
           <span>↓{{ formatBytes(status.recv_bytes || 0) }}</span>
         </div>
       </div>
-      
-      <!-- Toggle Switch -->
-      <Switch :model-value="status.is_running" @update:model-value="handleToggle" />
 
-      <!-- Hover Actions (Absolute or pushed) -->
-      <div 
-        class="absolute right-16 flex gap-2 transition-opacity duration-200"
-        :class="isHovered ? 'opacity-100' : 'opacity-0 pointer-events-none'"
+      <!-- Hover Actions -->
+      <div
+        v-show="isHovered"
+        class="flex gap-2 z-10"
       >
-        <button 
+        <button
           @click.stop="$emit('edit', tunnel)"
-          class="rounded p-1 text-slate-400 hover:bg-slate-700 hover:text-white"
+          class="rounded p-1 text-slate-400 hover:bg-slate-700 hover:text-white transition-colors"
           title="Edit"
         >
           <Pencil :size="16" />
         </button>
-        <button 
+        <button
           @click.stop="$emit('delete', tunnel.id)"
-          class="rounded p-1 text-slate-400 hover:bg-red-900/50 hover:text-red-400"
+          class="rounded p-1 text-slate-400 hover:bg-red-900/50 hover:text-red-400 transition-colors"
           title="Delete"
         >
           <Trash2 :size="16" />
         </button>
       </div>
+
+      <!-- Toggle Switch -->
+      <Switch :model-value="status.is_running" @update:model-value="handleToggle" />
     </div>
   </div>
 </template>

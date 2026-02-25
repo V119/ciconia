@@ -135,14 +135,24 @@ const selectPort = (container: DockerContainer, port: string) => {
   formData.container_name = container.name;
 
   // Extract port logic
-  const match = port.match(/:(\d+)\/tcp/);
+  // For format like "0.0.0.0:13005->9000/tcp", extract the container port (9000)
+  // For format like "9000/tcp", extract the port directly
   let portNumber: number;
 
-  if (match && match[1]) {
-    portNumber = parseInt(match[1]);
+  // First try to match the arrow format (host:port->container_port/protocol)
+  const arrowMatch = port.match(/->(\d+)\/(tcp|udp)/);
+  if (arrowMatch && arrowMatch[1]) {
+    portNumber = parseInt(arrowMatch[1]);
   } else {
-    const match2 = port.match(/^(\d+)\/tcp$/);
-    portNumber = (match2 && match2[1]) ? parseInt(match2[1]) : 80;
+    // Then try to match the simple format (port/protocol)
+    const simpleMatch = port.match(/^(\d+)\/(tcp|udp)$/);
+    if (simpleMatch && simpleMatch[1]) {
+      portNumber = parseInt(simpleMatch[1]);
+    } else {
+      // Fallback to extracting any number before /tcp or /udp
+      const fallbackMatch = port.match(/:(\d+)\/(tcp|udp)/);
+      portNumber = (fallbackMatch && fallbackMatch[1]) ? parseInt(fallbackMatch[1]) : 80;
+    }
   }
 
   formData.target_port = portNumber;
